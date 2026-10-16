@@ -55,11 +55,22 @@ try {
 // dsh-gitea-dispatch waiting-review API (dsh-gitea-dispatch#16, same optional rule).
 // Its store owns the only poll of /api/gitea-dispatch/waiting, so this plugin never
 // issues that request itself: the badge costs no extra traffic.
-type WaitingReviewSummaryMap = ReadonlyMap<string, { prNumber: number; state: 'waiting' | 'overdue' }>
+//
+// The publisher also exports its **own group fold**. The id conventions, the state
+// ranking and the deadline arithmetic are its business, so the badge delegates when
+// the publisher offers it and falls back to the local equivalent for an older
+// publisher that exports the map but not the aggregator.
+type WaitingReviewSummaryMap = ReadonlyMap<string, WaitingReviewSummaryEntry>
+type GiteaDispatchClient = {
+  useWaitingSummary?: () => WaitingReviewSummaryMap | undefined
+  summarizeWaitingGroup?: WaitingReviewSummarizer
+}
 let useWaitingSummaryHook: (() => WaitingReviewSummaryMap | undefined) | undefined
+let waitingReviewSummarize: WaitingReviewSummarizer | undefined
 try {
-  const giteaDispatch = require('dsh-gitea-dispatch/client') as { useWaitingSummary?: () => WaitingReviewSummaryMap } | undefined
+  const giteaDispatch = require('dsh-gitea-dispatch/client') as GiteaDispatchClient | undefined
   useWaitingSummaryHook = giteaDispatch?.useWaitingSummary
+  waitingReviewSummarize = giteaDispatch?.summarizeWaitingGroup
 } catch {
   // dsh-gitea-dispatch not installed — waiting review count stays 0
 }
@@ -71,7 +82,10 @@ import {
   deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
-import { directStatusesForGroups, withAggregatedStatus, type StatusedGroupNode } from '../group-status.ts'
+import {
+  directStatusesForGroups, withAggregatedStatus,
+  type StatusedGroupNode, type WaitingReviewSummaryEntry, type WaitingReviewSummarizer,
+} from '../group-status.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
@@ -451,7 +465,11 @@ function SessionTree({
   // out), so this map is the aggregator's only data source. Expanded groups are
   // measured too; see directStatusesForGroups.
   const directStatusByGroup = useMemo(
-    () => directStatusesForGroups(groups, waitingReviewSummary, scheduleSummary),
+    () => directStatusesForGroups(groups, waitingReviewSummary, scheduleSummary, now, waitingReviewSummarize),
+    // `now` is deliberately not a dependency: it is a render-time clock read (see above),
+    // and the only thing it decides here is which waiting-review deadlines still count as
+    // future. The publisher's store notifies on every deadline tick, so the pass that
+    // needs the new answer is already a re-render with a fresh `now`.
     [groups, waitingReviewSummary, scheduleSummary],
   )
 
