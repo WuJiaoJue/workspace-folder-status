@@ -82,34 +82,47 @@
 - **跨插件聚合**（可选）：dsh-later 的定时任务、dsh-gitea-dispatch 的等待评审，两个都没装也照常工作——见下。
 - **零配置可用**：默认开箱即用；7 个设置项可精细控制折叠徽标的来源显隐、悬停明细与数字样式。
 - **本体零改动**：官方 `dsh-client-ui-workspace` 包文件一个不动；改动全在本仓库源码里，profile 补丁只有两条（装本包、禁用官方行）。
-- **多语言**：跟随 DSH 界面语言（中文 / English），复用官方文案键；本包新增 `status.waitingReview`、`status.scheduled`，以及等待评审的三档状态文案 `status.waitingReviewOverdue` / `status.waitingReviewImminent` / `status.waitingReviewLeft`。
+- **多语言**：跟随 DSH 界面语言（中文 / English），复用官方文案键；本包新增 `status.waitingReview`、`status.scheduled`、陌生来源无文案时的兜底 `status.needsAttention`，以及等待评审的三档状态文案 `status.waitingReviewOverdue` / `status.waitingReviewImminent` / `status.waitingReviewLeft`。
 
 ---
 
-## 跨插件状态（可选）
+## 跨插件状态：facet 协议
 
-### 消费方：本插件怎么拿别人的状态
+折叠分组徽标可以显示**别的插件**的状态。方向是反的：**状态所有者把自己的事实注册进来**，本插件不为任何具体插件写适配。完整契约见 [docs/facet-protocol.md](docs/facet-protocol.md)。
 
-组内会话如果挂着定时任务或等待评审，徽标会各多一个图标。本插件**不自己轮询**，而是向数据源插件要一份摘要：
+```js
+const gs = require('dsh-group-status/client')
+const unregister = gs?.registerGroupStatusFacet?.({
+  protocol: gs.GROUP_STATUS_FACET_PROTOCOL_VERSION,
+  id: 'my-plugin.review',              // '<包名>.<状态名>'
+  subscribe: store.subscribe,           // 外部存储面，不是 React hook
+  getSnapshot: store.getSnapshot,
+  fold: (snapshot, sessionIds, now) => ({ count, tone, pulse, data }),
+  merge, label, renderIcon, settingKey, order,   // 全部可选
+})
+ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
+```
 
-| 数据源 | 提供 | 消费方接入 |
+- 只交 `protocol` / `id` / `subscribe` / `getSnapshot` / `fold` 五项就能显示：「N 需要关注」加一个按色档取色的通用点。**不会**把内部 id 念给用户。
+- 图标与文案归提供方（`renderIcon` / `label`）：「这个状态长什么样、超时该静止还是该闪」是它的知识。上一版由本插件按状态名反推，结果与提供方自己的行内图标相反（提供方把 `overdue` 画成静止，徽标却在脉冲）。
+- 折叠的父文件夹覆盖整棵子树，同名的折果要再合并一次，所以 `fold` 交结构化 `data` 而不是文本：文本合并不了。不写 `merge` 时用缺省规则（数量相加、色档取更紧急、`data` 丢弃）。
+- 本插件未安装 / 未启用时 `require` 抛错：`try/catch` 兜住即可，不影响你其余功能。
+- 同 id 冲突**由来源决胜，与注册顺序无关**（宿主不保证 apply 先后）：提供方恒胜过渡适配器。
+
+### 为什么用 `subscribe` / `getSnapshot`，不用 React hook
+
+徽标是 React 组件，而 hook 调用序列必须逐次渲染恒定。facet 是运行时注册 / 注销的：逐个调提供方的 hook，注册面一变 hook 数量就变，React 直接抛 "Rendered more hooks than during the previous render"。本插件只订阅一次、只读一个版本号，背后挂多少个来源都与 hook 数量无关。
+
+### 过渡期：本插件目前代管的两家
+
+| facet id | 现状 | 提供方要做的 |
 |---|---|---|
-| [dsh-later](https://github.com/dsh-plugin-collection/dsh-later) | `useScheduleSummary()`：会话 id → `{ count, pausedCount, nextAt, state }` | `require('dsh-later/client')` |
-| dsh-gitea-dispatch | `useWaitingSummary()`：会话 id → `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`；另有分组聚合 `summarizeWaitingGroup(summary, ids, now)` → `{ sessions, prNumbers, state, nextDeadline? }` | `require('dsh-gitea-dispatch/client')` |
+| `dsh-gitea-dispatch.waiting-review` | 本插件读 `dsh-gitea-dispatch/client` 的摘要 store 代为登记 | 自己注册同 id facet |
+| `dsh-later.schedule` | 本插件读 `dsh-later/client` 的摘要 store 代为登记 | 自己注册同 id facet |
 
-- 两个插件**未安装 / 未启用时静默降级**：图标不出现，其余徽标照常，不会报错也不会空转。
-- 本仓库 `package.json` 的 `dsh.client.external` 声明了这两个外部模块。
-- **等待评审的折叠算法交给提供方**：`summarizeWaitingGroup()` 导出了就用它（id 口径、`overdue > waiting` 排序、截止时刻算法都归它所有），没导出（更旧的提供方）才退回本仓库的等价实现 `summarizeWaitingGroupLocally()`。徽标因此与提供方自己画的会话行图标不会各说一套。
-- 提供方给出的 `prNumber` 与等待窗口都会进徽标：悬停明细写「在等哪个 PR、还剩多久」，`overdue` 写进文案而不只是颜色。窗口缺失（CI 没带 `waitMaxSec`）时不编造倒计时，只说「等待评审」。
+两家各自接入后，删除 [`src/client/legacy/`](src/client/legacy) 整个目录与 `package.json` 里对应的两条 `dsh.client.external` 声明即可。在那之前这条路径一直有效，两家不接入也不会坏。
 
-### 提供方：想暴露摘要的插件看这里
-
-别的插件要把自己的状态暴露给别人消费，可复用 [`src/client/cross-plugin-summary.ts`](src/client/cross-plugin-summary.ts) 这份骨架：`createSummaryStore`（可订阅 store）+ `createSummaryRegistry`（迟到的 store 自愈）+ `summarizeGroup` / `mapEquals` / `entryFor` / `normalizeSessionId`（折叠与 id 归一）。
-
-> ⚠️ **复制，不要 import。** 跨插件值导入在本项目走不通，实测报错 `Could not resolve "dsh-group-status"`：别的插件不依赖本包，客户端 bundle 又是自包含的闭包工厂，而 bundle 纯净度闸门只拦 `@deepseek-ai/*` 前缀，连"跨插件值导入"的专用报错都不会给。
-
-正确接法：把模板**复制**进 provider 插件 → provider 用 `registry.setStore(store)` 登记、从自己的 client 入口导出 `registry.useSummary` → consumer 再 `require('<provider>/client')` 用它的 hook。模板的每条改进都由 `tests/cross-plugin-summary.node.test.mjs` 锁住。
-
+> ⚠️ 跨插件**值导入**在本项目走不通（实测 `Could not resolve "dsh-group-status"`：客户端 bundle 是自包含的闭包工厂），所以提供方只认 `require('dsh-group-status/client')` 拿到的运行时符号，不 `import` 本包的类型。协议形状见文档，抄一份结构声明即可。
 ---
 
 ## 快速开始

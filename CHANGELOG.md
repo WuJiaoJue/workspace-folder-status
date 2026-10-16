@@ -4,6 +4,16 @@
 
 ## 未发布
 
+- **feat** 跨插件状态改为**协议**：本插件不再逐家适配，改由状态所有者注册 facet。新增 `src/client/facets.ts`（协议 v1 + 登记面）与 `docs/facet-protocol.md`（契约文档），client 入口导出 `registerGroupStatusFacet` / `GROUP_STATUS_FACET_PROTOCOL_VERSION`。加一个新状态源，本插件**零改动**。
+- **refactor** 聚合与渲染去掉所有按来源写死的分支：`GroupLiveStatus` 不再有 `scheduled*` / `waitingReview*` 具名字段，改持 `facets: Map<id, {facet, fold}>`；徽标的数字取各来源自报的 `count` 之和，图标取来源自带的 `renderIcon`（缺则按 `tone` 退通用点），文案取 `label`（缺则「N 需要关注」，绝不把内部 id 念给用户），脉冲取 `pulse`。
+- **refactor** 消费侧不再逐个调提供方 hook。facet 运行时可增删，而同一组件的 hook 序列必须恒定，逐个调会在注册面变化时直接抛 "Rendered more hooks than during the previous render"。改为订阅一个聚合外部存储 + 读版本号，与来源数量无关。
+- **feat** 同 id 冲突由**来源**决胜而非注册顺序（宿主不保证 apply 先后）：`provider` 恒胜过渡适配器 `legacy`，低一方的登记被拒并在 console 点名。
+- **fix** 登记面的通知改为**合并补跑**而非递归：订阅者在回调里再登记会嵌套递归（两个互相触发的订阅者即无界），且中间那轮看到的登记面是改到一半的。
+- **fix** 未声明 `order` 的来源排在所有声明过之后（彼此按注册先后）。原先缺省为 `0`，新接入的陌生来源会插到既有状态前面抢视觉位置。
+- **refactor** 过渡适配器的可测部分拆到 `src/client/legacy/store-source.ts`（纯函数）：与图标同文件的逻辑在本仓库根本 import 不动（`vitest.config.ts` 排除理由 (b)），"store 迟到"和"设置关掉哪个来源"这两处真会咬人的逻辑此前测不到。
+- **test** 新增协议契约用例：`tests/facets.node.test.mjs`（校验、决胜、注销语义、排序、重入合并、缺省合并）与 `tests/legacy-bridge.client.spec.ts`（设置过滤、store 迟到与替换、提供方缺席、订阅接线）；`tests/badge-labels.client.spec.ts` 改为经真实适配器驱动，锁住"陌生来源不写分支也能读出来"。
+- **chore** 新增文案键 `status.needsAttention`（中 / 英）。
+
 - **fix** 对 dsh-gitea-dispatch 的适配只做了一半：徽标只消费它发布的 `state`，其余字段全丢。提供方按 issue #16 发布的条目是 `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`，本插件的接收类型只声明 `{ prNumber, state }`，于是「在等哪个 PR」「还要等多久」「窗口缺失」三件事到不了界面。现在悬停明细与 `aria-label` 带上 PR 号与剩余时长（分钟粒度：徽标只在提供方 store 通知时重渲染，秒级读数会停在旧值上撒谎），窗口缺失时照实说「等待评审」，不编造倒计时。实测：注入一条 `PR #990002` 的等待登记后，折叠的 `dsh-plugins` 徽标由 `1 进行中 · 1 等待评审 · 1 定时任务` 变为 `1 进行中 · 1 等待评审（剩 2分钟） · #990002 · 1 定时任务`；把等待窗口改成已过期则变为 `…（已超时）…`。
 - **fix** `waiting` 与 `overdue` 此前只有颜色不同，文案都是「等待评审」。这与本插件自己为定时任务与等待评审选用不同图标的理由（只靠颜色区分对色盲用户不可用）自相矛盾，也丢掉了提供方算出来的状态。现在两者各有一句文案：`等待评审` 与 `等待评审（已超时）`。
 - **fix** 等待评审超时不再触发徽标脉冲。数据所有者把 `overdue` 的会话行图标画成静止（其 `lib/waiting-glyph.js` 写明「超时后停动画：静止即不再期待，比继续闪动更能表达已经结束」），且其 `overdue` 只代表 CI 的等待窗口到期、不代表评审失败。同一条等待在行内静止、在父级徽标闪动，就是同一事实的两种说法。红色不变。判据抽成纯函数 `groupBadgeIsUrgent()`，定时任务的 overdue/urgent 仍脉冲。

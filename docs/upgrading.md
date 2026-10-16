@@ -103,10 +103,10 @@
 
 **跨插件接口是否搬家**：
 
-- dsh-later 的 `useScheduleSummary()`（见其 README 的跨插件摘要 API 一节）
-- dsh-gitea-dispatch 的 `useWaitingSummary()` 与 `summarizeWaitingGroup()`（issue #16）：后者是**可选**的委托面，用到就委托、缺省才用本仓库的 `summarizeWaitingGroupLocally()`，所以提供方改名或删除只会让徽标退回本地实现，不会报错；两边判据由 `tests/group-status.client.spec.ts` 的「local waiting fold」一组用例钉住
+- **facet 协议是本包对外的契约**（[`docs/facet-protocol.md`](facet-protocol.md)）。改它的任何必填成员或语义都要升 `GROUP_STATUS_FACET_PROTOCOL_VERSION` 并在文档变更记录里写迁移；provider 侧只认 `require('dsh-group-status/client')` 的运行时符号，类型抄结构声明，不 import 本包。
+- 聚合与渲染**按协议工作，不按来源分支**：新状态源接入不应改动 `group-status.ts` / `badge-labels.ts` / `rows/GroupBadge.tsx`。上游换代若要求这三处重新施加，检查点是没有把来源名写回去。
+- 过渡适配器在 `src/client/legacy/`（`waiting-review.ts` / `schedule.ts` / `register-legacy-facets.tsx` / `bridge.ts` / `store-source.ts`），代 dsh-gitea-dispatch 与 dsh-later 登记。两家自注册后整目录与 `package.json` 的两条 `dsh.client.external` 一并删除。
 - provider 侧模板的导出面（`createSummaryStore` / `createSummaryRegistry` / `summarizeGroup` / `mapEquals` / `entryFor` / `normalizeSessionId` / `defaultCanPoll`）——它被别的插件**复制**走，改名会静默影响它们的调用点；设计说明与「复制、不要 import」的实测依据写在 [`src/client/cross-plugin-summary.ts`](../src/client/cross-plugin-summary.ts) 文件头
-
 ## 验证
 
 1. 找一个有进行中 / 待审批会话的分组 → 收起 → 文件夹名后出现徽标；
@@ -114,7 +114,7 @@
 3. 展开分组 → 徽标消失，子行自带状态；
 4. 组内有定时任务时出现时钟图标（紫 / 橙 / 红）；有等待评审时出现列表笔图标（琥珀 / 红），且明细与 `aria-label` 带上 `#PR` 与剩余时长；窗口到期后文案变成「等待评审（已超时）」，**徽标不闪动**（与 dsh-gitea-dispatch 自己那条会话行的静止图标一致）；
 5. 临时卸掉 dsh-later / dsh-gitea-dispatch → 图标消失但**不报错**、不空转；
-6. 只有旧版 dsh-gitea-dispatch（导出摘要但不导出 `summarizeWaitingGroup()`）时，徽标走本仓库的等价折叠，同一份数据的数字/颜色/文案与新版一致（`tests/group-status.client.spec.ts` 的「local waiting fold」用例锁住这套判据）；
+6. 提供方不导出 `summarizeWaitingGroup()`（旧版）时，徽标走本仓库的等价折叠，数字/色档/文案与新版一致（`tests/group-status.client.spec.ts` 锁住）；
 7. **设置项**：侧栏 **插件** → dsh-group-status（bundle 详情页，描述与「包含的组件」之间）→ 卡片分 3 个 section（折叠徽标 5 个开关 / 悬停明细 1 个开关 / 数字显示 1 个开关）→ 关掉某个开关 → 保存 → 对应来源的点/图标从徽标与悬停明细中消失、数字相应减少；再打开 → 回来。改完**无需刷新**；刷新页面后设置仍在（宿主把它写进 profile patch 的 `dsh-group-status` 条目 `config`）。表单外观应与「插件 → 官方 → 子智能体」同款：section 标题 13px/600、开关行 label 左 + switch 右、说明 12px 次级灰度、保存按钮在内容列左缘（官方 `SettingsForm` 的定位）；
 8. **设置面缺失时**（把 `Config` 临时去掉再构建）→ 插件照常加载，徽标按默认「显示已完成」；console 无 `cannot get property … without inject` 一类报错；
 9. 浏览器 console 无报错；
