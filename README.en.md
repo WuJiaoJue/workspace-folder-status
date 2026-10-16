@@ -44,15 +44,16 @@ Fold any group that has live sessions; a badge appears after the folder name:
 | Spinner | Running sessions inside, incl. running subagents | ongoing (`StateDot` animation) |
 | Green dot | Completed-unread sessions inside | done (same as the row) |
 | Clock | Scheduled tasks inside (data from dsh-later) | purple · orange (≤5 min) · red (overdue) |
-| List-pen | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (overdue) |
+| List-pen | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (the CI wait window lapsed) |
 
 Rules:
 
 - **Completed reaches the badge**: `done` (completed-unread) now shows a green dot while folded, reusing the same `StateDot` state as the session row; a group with nothing but completed sessions shows a badge just like any other.
 - **The count** = approvals + running (**including running subagents**) + completed + sessions with scheduled tasks + sessions waiting for review. Whether the number renders at all is gated by `countThreshold` (default 2 — a lone item shows dots only).
-- **Hover details**: the folder row's hover card appends lines in the order `approval · plan review · answer · running · subagents · waiting review · scheduled tasks · completed`, e.g. `1 Waiting for answer · 1 Running`.
+- **Hover details**: the folder row's hover card appends lines in the order `approval · plan review · answer · running · subagents · waiting review · scheduled tasks · completed`, e.g. `1 Waiting for answer · 1 Running`. The waiting-review line carries **which PR** and **how long is left**, e.g. `1 Waiting for review (3min left) · #2783`.
 - **Expanding defers to the rows**: the aggregate badge only renders while collapsed; expanded groups keep their per-row statuses with no duplication.
-- **Accessible**: the badge is `role="img"` with a localized `aria-label` (e.g. `1 Waiting for answer · 1 Running`) and the same text as its `title`.
+- **Accessible**: the badge is `role="img"` with a localized `aria-label` (e.g. `1 Waiting for answer · 1 Running`) and the same text as its `title`. Waiting and overdue are **two different sentences** (`Waiting for review` / `Waiting for review (overdue)`), not one sentence in two colours.
+- **Only scheduled reminders pulse.** A lapsed review wait does not animate, matching how dsh-gitea-dispatch draws its own session-row icon for that state: it stops the animation on purpose (its words: "stillness means no longer expecting"), and its `overdue` means only that CI stopped waiting, not that the review failed. A pulsing folder next to a still row icon would state the same fact twice. The red colour stays, same token as the publisher.
 
 ### Settings
 
@@ -81,7 +82,7 @@ Saving applies it live, with no refresh; the Host writes it into the profile pat
 - **Cross-plugin aggregation** (optional): scheduled tasks from dsh-later, waiting PR reviews from dsh-gitea-dispatch — works fine with neither installed.
 - **Usable with zero config**: sensible defaults out of the box; 7 settings let you fine-tune which sources appear in the folded badge, hover details, and count display.
 - **No stock files touched**: not a single file of the published `dsh-client-ui-workspace` is modified; all changes live in this repo's source, and the profile patch is two lines (add this package, disable the stock row).
-- **Localized**: follows the DSH UI language (中文 / English) by reusing the stock locale keys; only `status.waitingReview` and `status.scheduled` are new.
+- **Localized**: follows the DSH UI language (中文 / English) by reusing the stock locale keys. This package adds `status.waitingReview`, `status.scheduled`, and the three waiting-review states `status.waitingReviewOverdue` / `status.waitingReviewImminent` / `status.waitingReviewLeft`.
 
 ---
 
@@ -94,10 +95,12 @@ When sessions inside a group have scheduled tasks or wait on a PR review, the ba
 | Publisher | Provides | Consumer entry point |
 |---|---|---|
 | [dsh-later](https://github.com/dsh-plugins/dsh-later) | `useScheduleSummary()`: session id → `{ count, pausedCount, nextAt, state }` | `require('dsh-later/client')` |
-| dsh-gitea-dispatch | `useWaitingSummary()`: session id → `{ prNumber, state }` | `require('dsh-gitea-dispatch/client')` |
+| dsh-gitea-dispatch | `useWaitingSummary()`: session id → `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`, plus the group fold `summarizeWaitingGroup(summary, ids, now)` → `{ sessions, prNumbers, state, nextDeadline? }` | `require('dsh-gitea-dispatch/client')` |
 
 - When either plugin is **absent or disabled, the integration degrades silently**: no icon, everything else keeps working, no errors and no idle polling.
 - This repo declares both external modules in `package.json` under `dsh.client.external`.
+- **The waiting-review fold is delegated to its publisher.** When `summarizeWaitingGroup()` is exported the badge uses it, so the id conventions, the `overdue > waiting` ranking and the deadline arithmetic stay owned by one side; when it is missing (an older publisher) the badge falls back to the equivalent local fold. That is why the folder badge can never disagree with the row icon the same publisher draws.
+- Everything the publisher sends is rendered: the hover detail names the PR and the remaining wait, and `overdue` appears in the wording. With no window published (CI sent no `waitMaxSec`) the badge says it waits and invents no countdown.
 
 ### Publisher: exposing your own summary
 

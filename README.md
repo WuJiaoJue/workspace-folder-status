@@ -44,15 +44,16 @@
 | 转圈 | 组内有进行中（含运行中的子智能体） | ongoing（`StateDot` 转圈动画）|
 | 绿点 | 组内有已完成未读的会话 | done（与行内一致）|
 | 时钟 | 组内有定时任务（数据来自 dsh-later） | 紫 · 橙（≤5 分钟）· 红（已到期）|
-| 列表笔 | 组内有等待评审的 PR（数据来自 dsh-gitea-dispatch） | 琥珀 · 红（已超时）|
+| 列表笔 | 组内有等待评审的 PR（数据来自 dsh-gitea-dispatch） | 琥珀 · 红（CI 等待窗口已到期）|
 
 规则：
 
 - **已完成进徽标**：`done`（已完成未读）折叠时也显示绿点，和会话行的绿点同一个 `StateDot` 状态；一组只剩已完成时徽标照常出现。
 - **数字** = 待审批 + 进行中（**含运行中的子智能体**）+ 已完成 + 有定时任务的会话 + 等待评审的会话；数字是否出现受 `countThreshold` 控制（默认 2，即只剩 1 项时只画点、不显数字）。
-- **悬停明细**：文件夹行 hover 卡在路径、创建时间下面，按 `等待审批 · 计划待审 · 等待回答 · 进行中 · 子智能体 · 等待评审 · 定时任务 · 已完成` 的顺序追加明细行，例如 `1 等待回答 · 1 进行中`。
+- **悬停明细**：文件夹行 hover 卡在路径、创建时间下面，按 `等待审批 · 计划待审 · 等待回答 · 进行中 · 子智能体 · 等待评审 · 定时任务 · 已完成` 的顺序追加明细行，例如 `1 等待回答 · 1 进行中`。等待评审那一行带**在等的 PR 号**与**还剩多久**，例如 `1 等待评审（剩 3分钟） · #2783`。
 - **展开即让位**：聚合徽标只在折叠时出现；展开后子行自带状态，不重复显示。
-- **无障碍**：徽标是 `role="img"` + 本地化 `aria-label`（如 `1 等待回答 · 1 进行中`），悬停 `title` 同文案，读屏与鼠标都读得到。
+- **无障碍**：徽标是 `role="img"` + 本地化 `aria-label`（如 `1 等待回答 · 1 进行中`），悬停 `title` 同文案，读屏与鼠标都读得到。等待评审的 `waiting` 与 `overdue` 在文案里就是两句话（`等待评审` / `等待评审（已超时）`），不只是颜色不同。
+- **脉冲只给定时任务**：等待评审超时不闪动。数据所有者 dsh-gitea-dispatch 把自己那条会话行的超时图标画成**静止**（其 `lib/waiting-glyph.js`：「静止即不再期待」），且它的 `overdue` 只代表 CI 的等待窗口到期、不代表评审失败。同一条等待在父级徽标上闪、在行内静止，就是同一事实的两种说法。红色保留，与提供方同色。
 
 ### 设置项
 
@@ -81,7 +82,7 @@
 - **跨插件聚合**（可选）：dsh-later 的定时任务、dsh-gitea-dispatch 的等待评审，两个都没装也照常工作——见下。
 - **零配置可用**：默认开箱即用；7 个设置项可精细控制折叠徽标的来源显隐、悬停明细与数字样式。
 - **本体零改动**：官方 `dsh-client-ui-workspace` 包文件一个不动；改动全在本仓库源码里，profile 补丁只有两条（装本包、禁用官方行）。
-- **多语言**：跟随 DSH 界面语言（中文 / English），复用官方文案键，只新增了 `status.waitingReview` 与 `status.scheduled`。
+- **多语言**：跟随 DSH 界面语言（中文 / English），复用官方文案键；本包新增 `status.waitingReview`、`status.scheduled`，以及等待评审的三档状态文案 `status.waitingReviewOverdue` / `status.waitingReviewImminent` / `status.waitingReviewLeft`。
 
 ---
 
@@ -94,10 +95,12 @@
 | 数据源 | 提供 | 消费方接入 |
 |---|---|---|
 | [dsh-later](https://github.com/dsh-plugin-collection/dsh-later) | `useScheduleSummary()`：会话 id → `{ count, pausedCount, nextAt, state }` | `require('dsh-later/client')` |
-| dsh-gitea-dispatch | `useWaitingSummary()`：会话 id → `{ prNumber, state }` | `require('dsh-gitea-dispatch/client')` |
+| dsh-gitea-dispatch | `useWaitingSummary()`：会话 id → `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`；另有分组聚合 `summarizeWaitingGroup(summary, ids, now)` → `{ sessions, prNumbers, state, nextDeadline? }` | `require('dsh-gitea-dispatch/client')` |
 
 - 两个插件**未安装 / 未启用时静默降级**：图标不出现，其余徽标照常，不会报错也不会空转。
 - 本仓库 `package.json` 的 `dsh.client.external` 声明了这两个外部模块。
+- **等待评审的折叠算法交给提供方**：`summarizeWaitingGroup()` 导出了就用它（id 口径、`overdue > waiting` 排序、截止时刻算法都归它所有），没导出（更旧的提供方）才退回本仓库的等价实现 `summarizeWaitingGroupLocally()`。徽标因此与提供方自己画的会话行图标不会各说一套。
+- 提供方给出的 `prNumber` 与等待窗口都会进徽标：悬停明细写「在等哪个 PR、还剩多久」，`overdue` 写进文案而不只是颜色。窗口缺失（CI 没带 `waitMaxSec`）时不编造倒计时，只说「等待评审」。
 
 ### 提供方：想暴露摘要的插件看这里
 

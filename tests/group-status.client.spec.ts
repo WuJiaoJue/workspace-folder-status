@@ -20,7 +20,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { deriveGroups, owningParentFolder, type GroupNode } from '../src/client/tree.ts'
 import {
   aggregateGroupStatuses, directStatusesForGroups, withAggregatedStatus,
-  EMPTY_LIVE_STATUS, mergeLiveStatus, type GroupLiveStatus,
+  EMPTY_LIVE_STATUS, mergeLiveStatus, summarizeWaitingGroupLocally, waitingDeadlineOf,
+  type GroupLiveStatus, type WaitingReviewFold, type WaitingReviewSummarizer, type WaitingReviewSummaryMap,
 } from '../src/client/group-status.ts'
 
 const sid = (id: string): SessionId => id as SessionId
@@ -81,8 +82,10 @@ const groupOf = (
     expanded?: boolean
     archived?: readonly string[]
     schedule?: ReadonlyMap<string, { count: number; pausedCount: number; nextAt?: number; state: 'scheduled' | 'urgent' | 'overdue' }>
-    waiting?: ReadonlyMap<string, { prNumber: number; state: 'waiting' | 'overdue' }>
+    waiting?: ReadonlyMap<string, { prNumber: number; state: 'waiting' | 'overdue', startedAt?: number, waitMaxSec?: number, deadline?: number }>
   } = {},
+  now: number = Date.now(),
+  waitingSummarize?: WaitingReviewSummarizer,
 ): GroupNode => {
   const [group] = deriveGroups(
     state,
@@ -95,7 +98,7 @@ const groupOf = (
   // this helper before that pipeline was extractable patched `liveStatus` itself,
   // and the copy it kept encoded a semantics bug (expanded → empty) that no
   // production test could see.
-  const direct = directStatusesForGroups([group!], options.waiting, options.schedule)
+  const direct = directStatusesForGroups([group!], options.waiting, options.schedule, now, waitingSummarize)
   const aggregated = aggregateGroupStatuses(direct, new Map([[undefined, [group!]]]))
   return { ...group!, liveStatus: aggregated.get(group!.key) }
 }
@@ -197,9 +200,64 @@ describe('cross-plugin aggregation', () => {
       ['plain', { prNumber: 7, state: 'waiting' as const }],
       ['prefixed', { prNumber: 8, state: 'overdue' as const }],
     ])
-    expect(groupOf(state, new Map(), { waiting }).liveStatus).toEqual({
-      ...EMPTY, waitingReviewCount: 2, waitingReviewState: 'overdue',
+    expect(groupOf(state, new Map(), { waiting }, 0).liveStatus).toEqual({
+      ...EMPTY, waitingReviewCount: 2, waitingReviewState: 'overdue', waitingReviewPrNumbers: [7, 8],
     })
+  })
+
+  it('finds a webhook-prefixed published key from a prefixed member id', () => {
+    // The publisher keys by whatever the Host SessionId is, and Sessions dispatched from
+    // a webhook are genuinely `webhook-…`. Looking the member id up only after stripping
+    // its own prefix misses that entry, silently and without an error, the exact failure
+    // the publisher documents for its own row icon.
+    const state = list([summary('webhook-42', 30)])
+    const waiting = new Map([['webhook-42', { prNumber: 9, state: 'waiting' as const }]])
+    const other = new Map([['42', { prNumber: 9, state: 'waiting' as const }]])
+    expect(groupOf(state, new Map(), { waiting }).liveStatus.waitingReviewCount).toBe(1)
+    // …and the normalized spelling of the same entry hits the same member.
+    expect(groupOf(state, new Map(), { waiting: other }).liveStatus.waitingReviewCount).toBe(1)
+  })
+
+  it('carries the publisher\'s wait window as the group\'s next deadline', () => {
+    const state = list([summary('a', 30), summary('b', 20)])
+    const waiting = new Map([
+      ['a', { prNumber: 1, state: 'waiting' as const, startedAt: 1000, waitMaxSec: 60 }],
+      ['b', { prNumber: 2, state: 'waiting' as const, deadline: 5000 }],
+    ])
+    // 1000 + 60*1000 = 61000 vs the absolute 5000: the earlier one wins, and both are
+    // still ahead of `now = 100`.
+    expect(groupOf(state, new Map(), { waiting }, 100).liveStatus.waitingReviewNextDeadline).toBe(5000)
+    // A lapsed window is expressed by `state`, never as a negative countdown.
+    const lapsed = new Map([['a', { prNumber: 1, state: 'overdue' as const, deadline: 50 }]])
+    expect(groupOf(state, new Map(), { waiting: lapsed }, 100).liveStatus.waitingReviewNextDeadline).toBeUndefined()
+    // No window at all (CI sent no waitMaxSec) = "waiting, duration unknown".
+    const unknown = new Map([['a', { prNumber: 1, state: 'waiting' as const }]])
+    expect(groupOf(state, new Map(), { waiting: unknown }, 100).liveStatus.waitingReviewNextDeadline).toBeUndefined()
+  })
+
+  it('delegates the fold to the publisher when it exports one', () => {
+    const state = list([summary('a', 30)])
+    // The local fold would answer 1 member / PR #1 / `waiting`; the delegate's distinct
+    // answer is what proves the badge consumed the publisher rather than re-derived it.
+    const waiting = new Map([['a', { prNumber: 1, state: 'waiting' as const }]])
+    const seen: { ids?: readonly string[], now?: number } = {}
+    const summarize: WaitingReviewSummarizer = (
+      _summary: WaitingReviewSummaryMap, ids: readonly string[], now: number,
+    ): WaitingReviewFold => {
+      seen.ids = ids
+      seen.now = now
+      return { sessions: 3, prNumbers: [11, 12, 13], state: 'overdue', nextDeadline: 4242 }
+    }
+    const group = groupOf(state, new Map(), { waiting: waiting }, 7, summarize)
+    expect(group.liveStatus).toEqual({
+      ...EMPTY,
+      waitingReviewCount: 3,
+      waitingReviewState: 'overdue',
+      waitingReviewPrNumbers: [11, 12, 13],
+      waitingReviewNextDeadline: 4242,
+    })
+    expect(seen.ids).toEqual(['a'])
+    expect(seen.now).toBe(7)
   })
 
   it('degrades to no cross-plugin signal when neither publisher is installed', () => {
@@ -303,11 +361,13 @@ describe('P3-2: performance regression', () => {
 describe('mergeLiveStatus', () => {
   it('sums numeric counters', () => {
     const a: GroupLiveStatus = {
+      ...EMPTY,
       running: 1, approval: 2, planReview: 3, question: 4, done: 5, subagents: 6,
       scheduledSessions: 7, scheduledCount: 8, scheduleState: 'scheduled',
       waitingReviewCount: 9, waitingReviewState: 'waiting',
     }
     const b: GroupLiveStatus = {
+      ...EMPTY,
       running: 10, approval: 20, planReview: 30, question: 40, done: 50, subagents: 60,
       scheduledSessions: 70, scheduledCount: 80, scheduleState: 'urgent',
       waitingReviewCount: 90, waitingReviewState: 'overdue',
@@ -341,12 +401,73 @@ describe('mergeLiveStatus', () => {
 
   it('handles merging with EMPTY_LIVE_STATUS', () => {
     const status: GroupLiveStatus = {
-      running: 5, approval: 3, planReview: 0, question: 1, done: 2, subagents: 4,
+      ...EMPTY,
+      running: 5, approval: 3, question: 1, done: 2, subagents: 4,
       scheduledSessions: 1, scheduledCount: 3, scheduleState: 'urgent',
       waitingReviewCount: 2, waitingReviewState: 'waiting',
+      waitingReviewPrNumbers: [15, 2783], waitingReviewNextDeadline: 5000,
     }
     const merged = mergeLiveStatus(status, EMPTY)
     expect(merged).toEqual(status)
+    expect(mergeLiveStatus(EMPTY, status)).toEqual(status)
+  })
+
+  it('unions the PR numbers and keeps the earliest deadline when folding folders', () => {
+    // A collapsed parent spans several folders that may wait on the same PR: the list is
+    // what the hover detail names, so it must not repeat an entry, and the countdown must
+    // answer "how long is the soonest thing still being waited for".
+    const a = { ...EMPTY, waitingReviewCount: 2, waitingReviewPrNumbers: [20, 15], waitingReviewNextDeadline: 9000 }
+    const b = { ...EMPTY, waitingReviewCount: 1, waitingReviewPrNumbers: [15, 7], waitingReviewNextDeadline: 4000 }
+    const merged = mergeLiveStatus(a, b)
+    expect(merged.waitingReviewCount).toBe(3)
+    expect(merged.waitingReviewPrNumbers).toEqual([7, 15, 20])
+    expect(merged.waitingReviewNextDeadline).toBe(4000)
+    // One side without a deadline (unknown duration) must not erase the other's.
+    expect(mergeLiveStatus(a, { ...EMPTY, waitingReviewCount: 1 }).waitingReviewNextDeadline).toBe(9000)
+  })
+})
+
+describe('local waiting fold (the no-publisher-aggregator fallback)', () => {
+  const entry = (
+    prNumber: number,
+    state: 'waiting' | 'overdue',
+    extra: { startedAt?: number | string, waitMaxSec?: number, deadline?: number } = {},
+  ) => ({ prNumber, state, ...extra })
+
+  it('resolves the deadline like the publisher: absolute first, then startedAt + waitMaxSec', () => {
+    expect(waitingDeadlineOf(entry(1, 'waiting', { deadline: 500, startedAt: 100, waitMaxSec: 60 }))).toBe(500)
+    expect(waitingDeadlineOf(entry(1, 'waiting', { startedAt: 100, waitMaxSec: 60 }))).toBe(60_100)
+    // `startedAt` arrives as an ISO string across the wire and a number from Host state.
+    expect(waitingDeadlineOf(entry(1, 'waiting', { startedAt: '2026-01-01T00:00:00.000Z', waitMaxSec: 60 })))
+      .toBe(Date.parse('2026-01-01T00:00:00.000Z') + 60_000)
+    // No window at all = the duration is unknown: never a fabricated default.
+    expect(waitingDeadlineOf(entry(1, 'waiting'))).toBeUndefined()
+    expect(waitingDeadlineOf(entry(1, 'waiting', { waitMaxSec: 0 }))).toBeUndefined()
+  })
+
+  it('counts members, lists their PRs in member order, and ranks overdue first', () => {
+    const summary = new Map([
+      ['session-a', entry(2, 'overdue')],
+      ['b', entry(1, 'waiting')],
+    ])
+    const fold = summarizeWaitingGroupLocally(summary, ['b', 'session-a'], 0)
+    expect(fold).toEqual({ sessions: 2, prNumbers: [1, 2], state: 'overdue' })
+  })
+
+  it('keeps only a still-future deadline in nextDeadline', () => {
+    const summary = new Map([
+      ['a', entry(1, 'waiting', { deadline: 100 })],
+      ['b', entry(2, 'waiting', { deadline: 50 })],
+    ])
+    expect(summarizeWaitingGroupLocally(summary, ['a', 'b'], 10).nextDeadline).toBe(50)
+    expect(summarizeWaitingGroupLocally(summary, ['a', 'b'], 120).nextDeadline).toBeUndefined()
+  })
+
+  it('finds an entry keyed by either id spelling', () => {
+    const ids = ['session-x']
+    expect(summarizeWaitingGroupLocally(new Map([['x', entry(3, 'waiting')]]), ids, 0).sessions).toBe(1)
+    expect(summarizeWaitingGroupLocally(new Map([['webhook-x', entry(3, 'waiting')]]), ids, 0).sessions).toBe(1)
+    expect(summarizeWaitingGroupLocally(new Map([['session-x', entry(3, 'waiting')]]), ['webhook-x'], 0).sessions).toBe(1)
   })
 })
 

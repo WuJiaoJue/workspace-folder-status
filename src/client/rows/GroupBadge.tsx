@@ -5,6 +5,11 @@
  * vendored file only needs one import and one `<GroupBadge />` call to wire
  * the badge in. Everything fork-specific lives here.
  *
+ * The **wording** (label and hover lines) lives in `../badge-labels.ts`: this file
+ * imports the host icon set, which resolves to a closure bundle whose `require` graph
+ * only exists inside the DSH app, so anything kept here is untestable in this repo.
+ * Cross-plugin states are exactly what must stay testable.
+ *
  * @module
  */
 import type { ReactNode } from 'react'
@@ -13,39 +18,14 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode } from '../tree.ts'
-import type { GroupLiveStatus } from '../group-status.ts'
 import type { ResolvedBadgeSettings } from '../badge-settings.ts'
+import { groupBadgeIsUrgent, groupLiveLabel } from '../badge-labels.ts'
 import css from './Rows.module.css'
+
+export { groupBadgeIsUrgent, groupLiveLabel, hoverStatusLines, waitingReviewLabel } from '../badge-labels.ts'
 
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t']
-
-// ── Accessible label ──
-
-/**
- * Accessible label for a folded group's aggregated status, reusing the
- * session-row locale keys so both surfaces read identically.
- *
- * 按设置过滤：关掉的来源不出现在标签里（aria-label 与徽标视觉一致）。
- */
-export function groupLiveLabel(s: GroupLiveStatus, t: RowTranslate, settings: ResolvedBadgeSettings): string {
-  const parts: string[] = []
-  if (settings.showPendingInBadge) {
-    if (s.approval > 0) parts.push(`${s.approval} ${t('status.waitingApproval')}`)
-    if (s.planReview > 0) parts.push(`${s.planReview} ${t('status.planReview')}`)
-    if (s.question > 0) parts.push(`${s.question} ${t('status.waitingAnswer')}`)
-  }
-  if (settings.showRunningInBadge) {
-    if (s.running > 0) parts.push(`${s.running} ${t('status.running')}`)
-    if (s.subagents > 0) {
-      parts.push(t(s.subagents === 1 ? 'status.subagentsRunning.one' : 'status.subagentsRunning.other', { n: s.subagents }))
-    }
-  }
-  if (settings.showWaitingReviewInBadge && s.waitingReviewCount > 0) parts.push(`${s.waitingReviewCount} ${t('status.waitingReview')}`)
-  if (settings.showScheduledInBadge && s.scheduledSessions > 0) parts.push(`${s.scheduledSessions} ${t('status.scheduled')}`)
-  if (settings.showCompletedInBadge && s.done > 0) parts.push(`${s.done} ${t('status.completed')}`)
-  return parts.join(' · ')
-}
 
 // ── Badge ──
 
@@ -58,8 +38,16 @@ export function groupLiveLabel(s: GroupLiveStatus, t: RowTranslate, settings: Re
  *
  * `settings` 按来源过滤：关掉的来源不画点、不计数、不进 aria-label、不参与「是否显示徽标」
  * 的判断。会话行自身的状态不受影响：那是行级状态，不是分组提示。
+ *
+ * `now` 缺省取渲染时刻（与 `WorkspaceBrowser` 自己为相对时间读的时钟同一姿态）：
+ * 等待评审的剩余时长以此计算，故只在提供方 store 通知时随渲染更新。
  */
-export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: ResolvedBadgeSettings): ReactNode {
+export function groupLiveBadge(
+  group: GroupNode,
+  t: RowTranslate,
+  settings: ResolvedBadgeSettings,
+  now: number = Date.now(),
+): ReactNode {
   const s = group.liveStatus
   if (group.expanded || s === undefined) return null
   const pending = settings.showPendingInBadge ? s.approval + s.planReview + s.question : 0
@@ -69,7 +57,7 @@ export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: Reso
   const completed = settings.showCompletedInBadge ? s.done : 0
   // 只在有 pending / active / 已完成 / 定时任务 / 等待评审时显示徽标
   if (pending === 0 && active === 0 && completed === 0 && scheduled === 0 && !hasWaitingReview) return null
-  const label = groupLiveLabel(s, t, settings)
+  const label = groupLiveLabel(s, t, settings, now)
   const dots: ReactNode[] = []
   if (pending > 0) dots.push(<StateDot key="warn" state="warning" />)
   if (active > 0) dots.push(<StateDot key="run" state="ongoing" />)
@@ -82,7 +70,7 @@ export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: Reso
     dots.push(
       <span key="schedule" style={{ color: stateColor, display: 'inline-flex', alignItems: 'center' }}>
         <IconClockOutlineRegular size={14} />
-      </span>
+      </span>,
     )
   }
   // 等待评审图标（琥珀色；超时转红）。数据来自 dsh-gitea-dispatch 的
@@ -92,7 +80,7 @@ export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: Reso
     dots.push(
       <span key="waiting-review" style={{ color: stateColor, display: 'inline-flex', alignItems: 'center' }}>
         <IconListPenOutlineRegular size={14} />
-      </span>
+      </span>,
     )
   }
   // 数字统计 pending + active + 已完成 + 定时任务会话 + 等待评审会话（与 dot 一致）
@@ -100,9 +88,9 @@ export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: Reso
   // P3-3: count < countThreshold 时省略数字（点已表达"有东西"）；设置项 countThreshold 可调。
   const count = pending + active + completed + scheduled + (hasWaitingReview ? s.waitingReviewCount : 0)
   const countLabel = count > 99 ? '99+' : count >= settings.countThreshold ? String(count) : ''
-  // P2-2: 紧急状态（overdue/urgent）时添加脉冲动画类。
-  const isUrgent = s.scheduleState === 'overdue' || s.scheduleState === 'urgent'
-    || s.waitingReviewState === 'overdue'
+  // P2-2: 紧急状态时脉冲。判据在 badge-labels.ts 里（可测），只给定时任务的
+  // overdue/urgent；等待评审的 overdue 由提供方画成**静止**，本徽标跟随。
+  const isUrgent = groupBadgeIsUrgent(s)
   const badgeClass = isUrgent ? `${css.groupBadge} ${css.groupBadgeUrgent}` : css.groupBadge
   return (
     <span className={badgeClass} role="img" aria-label={label} title={label}>
@@ -110,45 +98,4 @@ export function groupLiveBadge(group: GroupNode, t: RowTranslate, settings: Reso
       {countLabel && <span className={css.groupBadgeCount}>{countLabel}</span>}
     </span>
   )
-}
-
-// ── Hover-card status lines ──
-
-/**
- * Build the status detail lines for the workspace hover card.
- *
- * Extracted so `WorkspaceHoverContent` in `Rows.tsx` only needs to map the
- * returned array — the fork-specific status→line logic lives here.
- *
- * 按设置过滤：关掉的来源不出现在明细行里；`showHoverDetails=false` 时整段返回空。
- */
-export function hoverStatusLines(
-  status: GroupLiveStatus | undefined,
-  t: RowTranslate,
-  settings: ResolvedBadgeSettings,
-): { state: 'warning' | 'ongoing' | 'done'; text: string }[] {
-  const lines: { state: 'warning' | 'ongoing' | 'done'; text: string }[] = []
-  if (status === undefined || !settings.showHoverDetails) return lines
-  if (settings.showPendingInBadge) {
-    if (status.approval > 0) lines.push({ state: 'warning', text: `${status.approval} ${t('status.waitingApproval')}` })
-    if (status.planReview > 0) lines.push({ state: 'warning', text: `${status.planReview} ${t('status.planReview')}` })
-    if (status.question > 0) lines.push({ state: 'warning', text: `${status.question} ${t('status.waitingAnswer')}` })
-  }
-  if (settings.showRunningInBadge) {
-    if (status.running > 0) lines.push({ state: 'ongoing', text: `${status.running} ${t('status.running')}` })
-    if (status.subagents > 0) {
-      lines.push({
-        state: 'ongoing',
-        text: t(status.subagents === 1 ? 'status.subagentsRunning.one' : 'status.subagentsRunning.other', { n: status.subagents }),
-      })
-    }
-  }
-  if (settings.showWaitingReviewInBadge && status.waitingReviewCount > 0) {
-    lines.push({ state: 'warning', text: `${status.waitingReviewCount} ${t('status.waitingReview')}` })
-  }
-  if (settings.showScheduledInBadge && status.scheduledSessions > 0) {
-    lines.push({ state: 'warning', text: `${status.scheduledSessions} ${t('status.scheduled')}` })
-  }
-  if (settings.showCompletedInBadge && status.done > 0) lines.push({ state: 'done', text: `${status.done} ${t('status.completed')}` })
-  return lines
 }

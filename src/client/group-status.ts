@@ -7,6 +7,7 @@
  *
  * @module
  */
+import { entryFor } from './cross-plugin-summary.ts'
 import type { GroupNode, SessionNode } from './tree.ts'
 
 // ── Types (structurally typed to avoid compile-time dependency on cross-plugin packages) ──
@@ -14,14 +15,117 @@ import type { GroupNode, SessionNode } from './tree.ts'
 /**
  * One session's waiting-review fact, as published by dsh-gitea-dispatch's
  * `useWaitingSummary()` (issue: dsh-gitea-dispatch#16).
+ *
+ * The optional fields are part of that publisher's contract and are what lets the
+ * badge say *which* PR and *how long is left*; the earlier version of this type
+ * declared only `{ prNumber, state }`, so the badge silently threw away everything
+ * else the publisher had already fetched for it.
  */
 export interface WaitingReviewSummaryEntry {
   readonly prNumber: number
   readonly state: 'waiting' | 'overdue'
+  /** Wait start (epoch ms from the Host state, ISO string across the wire). */
+  readonly startedAt?: number | string
+  /** CI-declared wait window (seconds); absent = the duration is unknown. */
+  readonly waitMaxSec?: number
+  /** CI-declared absolute deadline (epoch ms); preferred over `startedAt + waitMaxSec`. */
+  readonly deadline?: number
 }
 
 /** Session id → that session's waiting-review fact (no entry = not waiting). */
 export type WaitingReviewSummaryMap = ReadonlyMap<string, WaitingReviewSummaryEntry>
+
+/**
+ * Group-level fold of the waiting map: the shape dsh-gitea-dispatch publishes as
+ * `summarizeWaitingGroup()` (issue: dsh-gitea-dispatch#16). Declared here as a
+ * structural type so this plugin keeps no compile-time dependency on that package.
+ */
+export interface WaitingReviewFold {
+  /** Members that are waiting. */
+  sessions: number
+  /** PR numbers waited on, in the order the member ids were passed. */
+  prNumbers: readonly number[]
+  /** Highest-priority state across the group: overdue > waiting. */
+  state: 'waiting' | 'overdue' | undefined
+  /** Earliest **still-future** deadline in the group; absent = nothing to count down to. */
+  nextDeadline?: number
+}
+
+/**
+ * The publisher's own group fold, when its client half exports one.
+ *
+ * Used in preference to {@link summarizeWaitingGroupLocally}: the publisher owns the
+ * id conventions, the state ranking and the deadline arithmetic, so delegating keeps
+ * the badge from drifting the moment any of those change. The local fold is the
+ * fallback for an older publisher that exports the map but not the aggregator.
+ */
+export type WaitingReviewSummarizer = (
+  summary: WaitingReviewSummaryMap,
+  sessionIds: readonly string[],
+  now: number,
+) => WaitingReviewFold
+
+/**
+ * Absolute deadline of one waiting entry, in epoch ms; `undefined` = unknown duration.
+ *
+ * Mirrors the publisher's `deadlineOf` on purpose (absolute CI deadline first, only
+ * then `startedAt + waitMaxSec`): the CI's own wait starts *before* the broadcast
+ * reaches us, so a duration-only fallback would run the badge's countdown long past
+ * the real deadline. Both `startedAt` shapes are accepted for the same reason.
+ */
+export function waitingDeadlineOf(entry: WaitingReviewSummaryEntry): number | undefined {
+  if (typeof entry.deadline === 'number' && Number.isFinite(entry.deadline)) return entry.deadline
+  const started = typeof entry.startedAt === 'number'
+    ? entry.startedAt
+    : typeof entry.startedAt === 'string' && entry.startedAt !== ''
+      ? Date.parse(entry.startedAt)
+      : Number.NaN
+  if (
+    Number.isFinite(started)
+    && typeof entry.waitMaxSec === 'number'
+    && Number.isFinite(entry.waitMaxSec)
+    && entry.waitMaxSec > 0
+  ) {
+    return started + entry.waitMaxSec * 1000
+  }
+  return undefined
+}
+
+/**
+ * Local stand-in for the publisher's group fold; see {@link WaitingReviewSummarizer}.
+ *
+ * Same lookup tolerance (all four id spellings, through `cross-plugin-summary`'s
+ * `entryFor`, which is the publisher's `waitingEntryFor` rule), same ranking
+ * (overdue outranks waiting), same "only future deadlines" rule for `nextDeadline`.
+ */
+export function summarizeWaitingGroupLocally(
+  summary: WaitingReviewSummaryMap,
+  sessionIds: readonly string[],
+  now: number,
+): WaitingReviewFold {
+  const prNumbers: number[] = []
+  let state: 'waiting' | 'overdue' | undefined
+  let nextDeadline: number | undefined
+  for (const sessionId of sessionIds) {
+    const entry = entryFor(summary, sessionId)
+    if (entry === undefined) continue
+    prNumbers.push(entry.prNumber)
+    if (entry.state === 'overdue') state = 'overdue'
+    else if (state === undefined) state = 'waiting'
+    const deadline = waitingDeadlineOf(entry)
+    // Only a *future* deadline is something to count down to; a passed one is already
+    // expressed by `state: 'overdue'`, and counting it would render a negative wait.
+    if (deadline !== undefined && deadline > now && (nextDeadline === undefined || deadline < nextDeadline)) {
+      nextDeadline = deadline
+    }
+  }
+  const fold: WaitingReviewFold = { sessions: prNumbers.length, prNumbers, state }
+  // `nextDeadline` stays absent rather than set to undefined: the publisher's own fold
+  // omits the key when there is nothing to count down to, and matching that shape keeps
+  // the delegated and local paths indistinguishable to everything downstream.
+  if (nextDeadline !== undefined) fold.nextDeadline = nextDeadline
+  return fold
+}
 
 /**
  * One session's schedule fact, as published by dsh-later's `useScheduleSummary()`.
@@ -65,7 +169,24 @@ export interface GroupLiveStatus {
   waitingReviewCount: number
   /** Highest-priority waiting state across members: overdue > waiting. */
   waitingReviewState: 'waiting' | 'overdue' | undefined
+  /**
+   * PR numbers the group is waiting on, one per waiting member (the publisher lists a PR
+   * **per member**, so two members waiting on the same PR arrive twice, which is correct
+   * here, and `badge-labels.ts` collapses them where the label reads). Folding folders
+   * unions and sorts. Without this field the badge could say *that* a member waits but
+   * never *what* it waits for.
+   */
+  waitingReviewPrNumbers: readonly number[]
+  /**
+   * Earliest still-future deadline across the group's waiting members (epoch ms).
+   * Absent when every wait has an unknown duration or has already lapsed, which is
+   * exactly when the badge must not render a countdown.
+   */
+  waitingReviewNextDeadline: number | undefined
 }
+
+/** Frozen empty PR list: keeps the sentinel's reference stable across renders. */
+const EMPTY_PR_NUMBERS: readonly number[] = Object.freeze([])
 
 /**
  * Zero-valued sentinel for {@link GroupLiveStatus}.
@@ -79,6 +200,7 @@ export const EMPTY_LIVE_STATUS: GroupLiveStatus = Object.freeze({
   running: 0, approval: 0, planReview: 0, question: 0, done: 0, subagents: 0,
   scheduledSessions: 0, scheduledCount: 0, scheduleState: undefined,
   waitingReviewCount: 0, waitingReviewState: undefined,
+  waitingReviewPrNumbers: EMPTY_PR_NUMBERS, waitingReviewNextDeadline: undefined,
 }) as GroupLiveStatus
 
 /**
@@ -101,6 +223,15 @@ export function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLi
   const waitingPriorityA = a.waitingReviewState === 'overdue' ? 2 : a.waitingReviewState === 'waiting' ? 1 : 0
   const waitingPriorityB = b.waitingReviewState === 'overdue' ? 2 : b.waitingReviewState === 'waiting' ? 1 : 0
   const waitingReviewState = waitingPriorityA >= waitingPriorityB ? a.waitingReviewState : b.waitingReviewState
+  // PR numbers merge into one ascending, de-duplicated list (a folded parent spans
+  // several folders that may wait on the same PR); the countdown keeps the earliest
+  // deadline, since "how long is still being waited for" is the question a badge answers.
+  const waitingReviewPrNumbers = mergePrNumbers(a.waitingReviewPrNumbers, b.waitingReviewPrNumbers)
+  const waitingReviewNextDeadline = a.waitingReviewNextDeadline === undefined
+    ? b.waitingReviewNextDeadline
+    : b.waitingReviewNextDeadline === undefined
+      ? a.waitingReviewNextDeadline
+      : Math.min(a.waitingReviewNextDeadline, b.waitingReviewNextDeadline)
 
   return {
     running: a.running + b.running,
@@ -114,21 +245,23 @@ export function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLi
     scheduleState,
     waitingReviewCount: a.waitingReviewCount + b.waitingReviewCount,
     waitingReviewState,
+    waitingReviewPrNumbers,
+    waitingReviewNextDeadline,
   }
 }
 
-// ── Helpers ──
-
 /**
- * Strip the `session-` / `webhook-` prefix from a Session id.
+ * Ascending de-duplicated union of two PR-number lists.
  *
- * dsh-gitea-dispatch publishes its waiting map keyed by the host SessionId, but
- * its HTTP endpoints key by this normalized form. Accepting both here keeps the
- * badge working across that publisher's conventions without knowing which is in
- * play.
+ * Tolerates a missing list: the same "absent field reads as nothing" rule the badge
+ * settings apply, so a hand-built or older `GroupLiveStatus` merges instead of throwing.
  */
-function stripSessionPrefix(id: string): string {
-  return id.replace(/^(?:session|webhook)-/, '')
+function mergePrNumbers(a: readonly number[] | undefined, b: readonly number[] | undefined): readonly number[] {
+  if (a === undefined || a.length === 0) return b ?? EMPTY_PR_NUMBERS
+  if (b === undefined || b.length === 0) return a
+  const union = new Set(a)
+  for (const pr of b) union.add(pr)
+  return [...union].sort((x, y) => x - y)
 }
 
 // ── Main computation ──
@@ -142,12 +275,16 @@ function stripSessionPrefix(id: string): string {
  * @param sessionIds - the same members' Session ids (schedule and waiting facts are keyed by id).
  * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
  * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
+ * @param now - epoch ms used by the waiting fold to decide which deadlines are still future.
+ * @param waitingReviewSummarize - the publisher's own group fold, when it publishes one.
  */
 export function summarizeGroupStatus(
   nodes: readonly SessionNode[],
   sessionIds: readonly string[],
   waitingReviewSummary?: WaitingReviewSummaryMap,
   scheduleSummary?: ScheduleSummaryMap,
+  now: number = Date.now(),
+  waitingReviewSummarize?: WaitingReviewSummarizer,
 ): GroupLiveStatus {
   let running = 0
   let approval = 0
@@ -190,27 +327,28 @@ export function summarizeGroupStatus(
     scheduleState = highestPriority === 3 ? 'overdue' : highestPriority === 2 ? 'urgent' : highestPriority === 1 ? 'scheduled' : undefined
   }
 
-  // Aggregate waiting-review summary from dsh-gitea-dispatch (its #16).
+  // Waiting-review facts come from dsh-gitea-dispatch (its issue #16 public API).
   //
   // Counts **members**, not PRs: one session waits on exactly one PR, and the
   // badge's number must mean "how many sessions in this folder need attention".
-  // `overdue` outranks `waiting` for the dot color, mirroring the schedule rule.
-  let waitingReviewCount = 0
-  let waitingReviewState: 'waiting' | 'overdue' | undefined = undefined
-  if (waitingReviewSummary && sessionIds.length > 0) {
-    for (const id of sessionIds) {
-      const entry = waitingReviewSummary.get(id) ?? waitingReviewSummary.get(stripSessionPrefix(id))
-      if (entry === undefined) continue
-      waitingReviewCount += 1
-      if (entry.state === 'overdue') waitingReviewState = 'overdue'
-      else if (waitingReviewState === undefined) waitingReviewState = 'waiting'
-    }
-  }
+  // `overdue` outranks `waiting` for the icon colour, mirroring the schedule rule.
+  //
+  // The fold itself is delegated to the publisher when it exports one: it owns the id
+  // conventions, the state ranking and the deadline arithmetic, so consuming its
+  // `summarizeWaitingGroup()` rather than re-deriving them here is what keeps the badge
+  // from silently disagreeing with the row icon the same plugin draws.
+  const waitingReview = waitingReviewSummary === undefined || sessionIds.length === 0
+    ? undefined
+    : (waitingReviewSummarize ?? summarizeWaitingGroupLocally)(waitingReviewSummary, sessionIds, now)
+  const waitingReviewCount = waitingReview?.sessions ?? 0
+  const waitingReviewState = waitingReview?.state
+  const waitingReviewPrNumbers = waitingReview?.prNumbers ?? EMPTY_PR_NUMBERS
+  const waitingReviewNextDeadline = waitingReview?.nextDeadline
 
   return {
     running, approval, planReview, question, done, subagents,
     scheduledSessions, scheduledCount, scheduleState,
-    waitingReviewCount, waitingReviewState,
+    waitingReviewCount, waitingReviewState, waitingReviewPrNumbers, waitingReviewNextDeadline,
   }
 }
 
@@ -227,16 +365,22 @@ export function summarizeGroupStatus(
  * @param groups - derived groups, each with its member rows already populated.
  * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
  * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
+ * @param now - one clock reading shared by every group in the pass, so sibling badges
+ *   cannot disagree about which deadlines are still ahead.
+ * @param waitingReviewSummarize - dsh-gitea-dispatch's own group fold, when it exports one.
  */
 export function directStatusesForGroups(
   groups: readonly { key: string; sessions: readonly SessionNode[] }[],
   waitingReviewSummary?: WaitingReviewSummaryMap,
   scheduleSummary?: ScheduleSummaryMap,
+  now: number = Date.now(),
+  waitingReviewSummarize?: WaitingReviewSummarizer,
 ): Map<string, GroupLiveStatus> {
   const map = new Map<string, GroupLiveStatus>()
   for (const group of groups) {
     map.set(group.key, summarizeGroupStatus(
       group.sessions, group.sessions.map(s => s.id), waitingReviewSummary, scheduleSummary,
+      now, waitingReviewSummarize,
     ))
   }
   return map
