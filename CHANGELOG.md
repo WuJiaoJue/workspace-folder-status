@@ -4,6 +4,12 @@
 
 ## 未发布
 
+- **fix** 对 dsh-gitea-dispatch 的适配只做了一半：徽标只消费它发布的 `state`，其余字段全丢。提供方按 issue #16 发布的条目是 `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`，本插件的接收类型只声明 `{ prNumber, state }`，于是「在等哪个 PR」「还要等多久」「窗口缺失」三件事到不了界面。现在悬停明细与 `aria-label` 带上 PR 号与剩余时长（分钟粒度：徽标只在提供方 store 通知时重渲染，秒级读数会停在旧值上撒谎），窗口缺失时照实说「等待评审」，不编造倒计时。实测：注入一条 `PR #990002` 的等待登记后，折叠的 `dsh-plugins` 徽标由 `1 进行中 · 1 等待评审 · 1 定时任务` 变为 `1 进行中 · 1 等待评审（剩 2分钟） · #990002 · 1 定时任务`；把等待窗口改成已过期则变为 `…（已超时）…`。
+- **fix** `waiting` 与 `overdue` 此前只有颜色不同，文案都是「等待评审」。这与本插件自己为定时任务与等待评审选用不同图标的理由（只靠颜色区分对色盲用户不可用）自相矛盾，也丢掉了提供方算出来的状态。现在两者各有一句文案：`等待评审` 与 `等待评审（已超时）`。
+- **fix** 等待评审超时不再触发徽标脉冲。数据所有者把 `overdue` 的会话行图标画成静止（其 `lib/waiting-glyph.js` 写明「超时后停动画：静止即不再期待，比继续闪动更能表达已经结束」），且其 `overdue` 只代表 CI 的等待窗口到期、不代表评审失败。同一条等待在行内静止、在父级徽标闪动，就是同一事实的两种说法。红色不变。判据抽成纯函数 `groupBadgeIsUrgent()`，定时任务的 overdue/urgent 仍脉冲。
+- **refactor** 分组折叠交给提供方：能用到 `summarizeWaitingGroup()` 就用它（id 口径、状态排序、截止时刻算法都归它所有），缺失时才退回本仓库的等价实现 `summarizeWaitingGroupLocally()`。此前本插件自己重写了一遍查表，且比提供方少两条兜底（`session-` / `webhook-` 前缀形态），只会静默 miss；现在与 `cross-plugin-summary.ts` 的 `entryFor()` 共用同一条四形态规则。
+- **refactor** 徽标文案拆到 `src/client/badge-labels.ts`（纯函数，零运行时 import）。`rows/GroupBadge.tsx` 引入宿主图标集，其 `require` 图只在 DSH 应用内解析得到（`vitest.config.ts` 排除理由 (b)），文案留在原地等于这批跨插件状态永远测不到。新增 `tests/badge-labels.client.spec.ts` 11 例锁住文案与脉冲判据。
+- **feat** 等待评审的事实随多层聚合正确上卷：PR 号取并集、去重、升序，倒计时取组内最早的未到期截止（一侧无窗口不会抹掉另一侧的）。多个会话等同一个 PR 时，明细只写一次 `#15`。
 - **feat** 多层聚合：父分组折叠时，徽标聚合所有后代分组的会话状态，不再只看直接成员。嵌套的 workspace 目录结构现在能正确反映整棵子树的活动。
 - **fix** 上面这条「多层聚合」交付时是坏的：折叠的父文件夹会**漏算处于展开状态的中间层文件夹**的会话。`directStatusesForGroups` 沿用了「展开即 `EMPTY_LIVE_STATUS`」的占位写法，而聚合器把这个值当输入消费，于是展开的中间层对祖先贡献 0。现在展开的分组同样被测量，「不画徽标」退回渲染层决定。实测：dsh-group-status 展开且 1 个运行中、dsh-gitea-dispatch 1、dsh-later 3 时，dsh-plugins 的折叠徽标由 `4` 修正为 `5`。
 - **fix** 折叠文件夹时完全没有淡出动画。`AnimatedRows` 的 `resetKey` 混入了 `sessionLimits`，而上游在折叠时会把该组的 limit 重置回默认值 → `resetKey` 变化 → 动画被整个跳过。属上游行为（vendor 基线 `d70ad82`），非本仓库引入。副作用：「展开其余 N 个会话」现在也会淡入而非瞬时呈现。
