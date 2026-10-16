@@ -106,6 +106,7 @@ export declare const zh: {
     'status.compact.approval': string;
     'status.compact.planReview': string;
     'status.compact.answer': string;
+    'status.needsAttention': string;
     'status.waitingReview': string;
     'status.waitingReviewOverdue': string;
     'status.waitingReviewImminent': string;
@@ -250,6 +251,7 @@ export declare const en: {
     'status.compact.approval': string;
     'status.compact.planReview': string;
     'status.compact.answer': string;
+    'status.needsAttention': string;
     'status.waitingReview': string;
     'status.waitingReviewOverdue': string;
     'status.waitingReviewImminent': string;

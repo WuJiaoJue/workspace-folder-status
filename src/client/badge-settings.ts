@@ -53,6 +53,28 @@ export interface ResolvedBadgeSettings {
   countThreshold: number
 }
 
+/**
+ * `ResolvedBadgeSettings` 里的布尔开关键。
+ *
+ * facet 的 `settingKey` 就是它的字符串形态：状态所有者声明"我受哪个开关管"，
+ * 而开关的语义与取值仍由本插件判定。
+ */
+export type BooleanSettingKey = {
+  [K in keyof ResolvedBadgeSettings]: ResolvedBadgeSettings[K] extends boolean ? K : never
+}[keyof ResolvedBadgeSettings]
+
+/**
+ * 一个 facet 是否被设置关掉。
+ *
+ * - 没有 `settingKey` → 始终参与（缺省是"显示"，与其余开关的默认值同源）。
+ * - 声明了但不是布尔开关键 → 同样按显示处理：拼错的键不该让一个状态整块消失。
+ */
+export function facetVisibleBySettings(settings: ResolvedBadgeSettings, settingKey: string | undefined): boolean {
+  if (settingKey === undefined) return true
+  const value = settings[settingKey as keyof ResolvedBadgeSettings]
+  return typeof value === 'boolean' ? value : true
+}
+
 /** 标准 props 源的结构面（与 `HostObservable<ResolvedBadgeSettings>` 兼容）。 */
 export interface BadgeSettingsSource {
   getSnapshot(): ResolvedBadgeSettings

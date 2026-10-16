@@ -45,6 +45,8 @@ import {
 } from './contract/slots.ts'
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { createBadgeSettingsSource, ENTRY_ID, type ResolvedBadgeSettings } from './badge-settings.ts'
+import { disposeFacetStore } from './facet-store.ts'
+import { installLegacyBridges } from './legacy/bridge.ts'
 import { BadgeSettingsCard } from './BadgeSettingsCard.tsx'
 import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
@@ -128,6 +130,38 @@ const CONFIG_CARD_KEY = 'dsh-group-status'
  * provides a waitable service. apply therefore depends on each slot
  * declaration through `slots.inject()` instead of assuming order.
  */
+/**
+ * ── 跨插件公共 API：分组状态 facet 协议 ─────────────────────────────
+ *
+ * 任何插件想让自己的状态进**折叠分组**的徽标，就 `require('dsh-group-status/client')`
+ * 拿这三个符号注册一个 facet；本插件不认识它，也不为它改代码：
+ *
+ * ```ts
+ * const gs = require('dsh-group-status/client')
+ * const unregister = gs?.registerGroupStatusFacet?.({
+ *   protocol: gs.GROUP_STATUS_FACET_PROTOCOL_VERSION,
+ *   id: 'my-plugin.review',                  // '<包名>.<状态名>'，全局唯一
+ *   subscribe: store.subscribe,               // 外部存储面，不要求 React hook
+ *   getSnapshot: store.getSnapshot,
+ *   fold: (snapshot, sessionIds, now) => ({ count, tone, pulse, data }),
+ *   merge: (a, b) => ({ ... }),              // 多层文件夹怎么合并你的折果
+ *   label: (fold, { now }) => '等待评审（剩 3分钟） · #15',
+ *   renderIcon: (fold) => h('svg', …),        // 图标归你，本插件只负责摆放
+ * })
+ * ctx.effect(() => () => unregister?.(), 'my-plugin: group-status facet')
+ * ```
+ *
+ * 完整契约、版本规则与为什么是这个方向见 `docs/facet-protocol.md`。
+ */
+export {
+  GROUP_STATUS_FACET_PROTOCOL_VERSION, FACET_TONE_RANK, registerGroupStatusFacet,
+  registry as groupStatusFacetRegistry,
+} from './facets.ts'
+export type {
+  AnyFacet, AnyFacetFold, FacetFold, FacetOrigin, FacetRenderContext,
+  FacetRegistration, FacetRejection, FacetTone, GroupStatusFacet, Unregister,
+} from './facets.ts'
+
 export const inject = [
   'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts',
 ]
@@ -155,6 +189,18 @@ export function apply(ctx: Context): void {
   )
   ctx.slots.provideRoot({ hooks: { workspaces: workspaces.list } })
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-workspace: dictionaries')
+
+  // 外部状态来源：本插件**不认识任何具体插件**，只有一张登记面（`facets.ts`）。
+  // 过渡期由 legacy/ 代为登记现有的两家；它们自己注册之后这条 effect 与整个 legacy
+  // 目录一并删除。放在 apply 里而不是模块求值期，是为了挂在插件生命周期上：卸载时
+  // 注销 facet，不给下一代的 facet id 留下幽灵登记。
+  ctx.effect(() => {
+    const unregister = installLegacyBridges()
+    return () => {
+      unregister()
+      disposeFacetStore()
+    }
+  }, 'ui-workspace: status facets')
   const shortcutControls = createWorkspaceShortcutControls()
 
   // 折叠徽标的显示偏好（`showCompletedInBadge`）。
