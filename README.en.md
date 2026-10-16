@@ -44,15 +44,16 @@ Fold any group that has live sessions; a badge appears after the folder name:
 | Spinner | Running sessions inside, incl. running subagents | ongoing (`StateDot` animation) |
 | Green dot | Completed-unread sessions inside | done (same as the row) |
 | Clock | Scheduled tasks inside (data from dsh-later) | purple · orange (≤5 min) · red (overdue) |
-| List-pen | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (overdue) |
+| List-pen | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (the CI wait window lapsed) |
 
 Rules:
 
 - **Completed reaches the badge**: `done` (completed-unread) now shows a green dot while folded, reusing the same `StateDot` state as the session row; a group with nothing but completed sessions shows a badge just like any other.
 - **The count** = approvals + running (**including running subagents**) + completed + sessions with scheduled tasks + sessions waiting for review. Whether the number renders at all is gated by `countThreshold` (default 2 — a lone item shows dots only).
-- **Hover details**: the folder row's hover card appends lines in the order `approval · plan review · answer · running · subagents · waiting review · scheduled tasks · completed`, e.g. `1 Waiting for answer · 1 Running`.
+- **Hover details**: the folder row's hover card appends lines in the order `approval · plan review · answer · running · subagents · waiting review · scheduled tasks · completed`, e.g. `1 Waiting for answer · 1 Running`. The waiting-review line carries **which PR** and **how long is left**, e.g. `1 Waiting for review (3min left) · #2783`.
 - **Expanding defers to the rows**: the aggregate badge only renders while collapsed; expanded groups keep their per-row statuses with no duplication.
-- **Accessible**: the badge is `role="img"` with a localized `aria-label` (e.g. `1 Waiting for answer · 1 Running`) and the same text as its `title`.
+- **Accessible**: the badge is `role="img"` with a localized `aria-label` (e.g. `1 Waiting for answer · 1 Running`) and the same text as its `title`. Waiting and overdue are **two different sentences** (`Waiting for review` / `Waiting for review (overdue)`), not one sentence in two colours.
+- **Only scheduled reminders pulse.** A lapsed review wait does not animate, matching how dsh-gitea-dispatch draws its own session-row icon for that state: it stops the animation on purpose (its words: "stillness means no longer expecting"), and its `overdue` means only that CI stopped waiting, not that the review failed. A pulsing folder next to a still row icon would state the same fact twice. The red colour stays, same token as the publisher.
 
 ### Settings
 
@@ -81,32 +82,47 @@ Saving applies it live, with no refresh; the Host writes it into the profile pat
 - **Cross-plugin aggregation** (optional): scheduled tasks from dsh-later, waiting PR reviews from dsh-gitea-dispatch — works fine with neither installed.
 - **Usable with zero config**: sensible defaults out of the box; 7 settings let you fine-tune which sources appear in the folded badge, hover details, and count display.
 - **No stock files touched**: not a single file of the published `dsh-client-ui-workspace` is modified; all changes live in this repo's source, and the profile patch is two lines (add this package, disable the stock row).
-- **Localized**: follows the DSH UI language (中文 / English) by reusing the stock locale keys; only `status.waitingReview` and `status.scheduled` are new.
+- **Localized**: follows the DSH UI language (中文 / English) by reusing the stock locale keys. This package adds `status.waitingReview`, `status.scheduled`, a fallback `status.needsAttention` for facets that ship no wording, and the three waiting-review states `status.waitingReviewOverdue` / `status.waitingReviewImminent` / `status.waitingReviewLeft`.
 
 ---
 
-## Cross-plugin status (optional)
+## Cross-plugin status: the facet protocol
 
-### Consumer: how this plugin reads others
+A folded group badge can show state owned by **another plugin**. The direction is inverted: **the owner registers its facts in**, and this plugin writes no adapter for any specific plugin. The full contract lives in [docs/facet-protocol.md](docs/facet-protocol.md).
 
-When sessions inside a group have scheduled tasks or wait on a PR review, the badge gains one icon each. This plugin does **not** poll anything itself — it asks the publishing plugin for a summary:
+```js
+const gs = require('dsh-group-status/client')
+const unregister = gs?.registerGroupStatusFacet?.({
+  protocol: gs.GROUP_STATUS_FACET_PROTOCOL_VERSION,
+  id: 'my-plugin.review',              // '<package>.<state>'
+  subscribe: store.subscribe,           // an external-store face, not a React hook
+  getSnapshot: store.getSnapshot,
+  fold: (snapshot, sessionIds, now) => ({ count, tone, pulse, data }),
+  merge, label, renderIcon, settingKey, order,   // all optional
+})
+ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
+```
 
-| Publisher | Provides | Consumer entry point |
+- The five required members alone already render: `N Needs attention` plus a tone-coloured generic dot. Your internal id is **never** read out to the user.
+- Icon and wording belong to the owner (`renderIcon` / `label`): what a state looks like, and whether a lapsed wait should sit still or pulse, is its knowledge. Previously this plugin inferred it from state names and ended up contradicting the owner, which draws `overdue` **statically** while the badge pulsed.
+- A collapsed parent spans the whole subtree, so same-facet folds get merged again. That is why `fold` returns structured `data` rather than text: text cannot be merged. Without `merge` the default rule applies (counts add, the more urgent tone wins, `data` is dropped).
+- When this plugin is absent or disabled `require` throws: catch it and carry on, your own features are unaffected.
+- Same-id conflicts are settled **by origin, not by registration order** (the host does not order plugin `apply`): the owner always wins over a transitional adapter.
+
+### Why `subscribe` / `getSnapshot` instead of a React hook
+
+The badge is a React component, and hook order must be constant across renders of one component. Facets register and unregister at runtime: calling each owner's hook would change the hook count the moment the registry moves, and React throws "Rendered more hooks than during the previous render". This plugin subscribes once and reads one version number, however many sources stand behind it.
+
+### Transition: the two sources this plugin still hosts
+
+| facet id | Today | What the owner must do |
 |---|---|---|
-| [dsh-later](https://github.com/dsh-plugin-collection/dsh-later) | `useScheduleSummary()`: session id → `{ count, pausedCount, nextAt, state }` | `require('dsh-later/client')` |
-| dsh-gitea-dispatch | `useWaitingSummary()`: session id → `{ prNumber, state }` | `require('dsh-gitea-dispatch/client')` |
+| `dsh-gitea-dispatch.waiting-review` | this plugin reads the `dsh-gitea-dispatch/client` summary store and registers on its behalf | register the same id itself |
+| `dsh-later.schedule` | this plugin reads the `dsh-later/client` summary store and registers on its behalf | register the same id itself |
 
-- When either plugin is **absent or disabled, the integration degrades silently**: no icon, everything else keeps working, no errors and no idle polling.
-- This repo declares both external modules in `package.json` under `dsh.client.external`.
+Once both do, delete [`src/client/legacy/`](src/client/legacy) and the two matching `dsh.client.external` entries. Until then that path keeps working and nothing breaks if neither adopts it.
 
-### Publisher: exposing your own summary
-
-A plugin that wants to publish its state for others copies the skeleton in [`src/client/cross-plugin-summary.ts`](src/client/cross-plugin-summary.ts): `createSummaryStore` (a subscribable store) + `createSummaryRegistry` (heals late-registered stores) + `summarizeGroup` / `mapEquals` / `entryFor` / `normalizeSessionId` (folding and id normalization).
-
-> ⚠️ **Copy it, do not import it.** Cross-plugin value imports do not resolve in this project — measured, the error is `Could not resolve "dsh-group-status"`: other plugins do not depend on this package, a client bundle is a self-contained closure factory, and the bundle-purity gate only rejects the `@deepseek-ai/*` prefix, so a cross-plugin import does not even get its dedicated diagnostic.
-
-The working shape is: copy the template into the provider → the provider calls `registry.setStore(store)` and re-exports `registry.useSummary` from its client entry → the consumer then uses it through `require('<provider>/client')`. Every improvement to the template is locked by `tests/cross-plugin-summary.node.test.mjs`.
-
+> ⚠️ Cross-plugin **value imports** do not work in this project (measured: `Could not resolve "dsh-group-status"`: a client bundle is a self-contained closure factory). Owners therefore use only the runtime symbols from `require('dsh-group-status/client')` and never `import` this package's types; copying the structural declarations from the protocol doc is enough.
 ---
 
 ## Quick start

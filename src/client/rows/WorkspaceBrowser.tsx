@@ -14,7 +14,7 @@
  * are slot entries with their own behavior, so this component threads no
  * action callbacks and hosts no action surface.
  */
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
@@ -42,27 +42,6 @@ import { workspaceDisplayTitle } from '@deepseek-ai/dsh-api-workspace-controller
 // matches dsh.client.external), keeping them runtime requires instead of inlining.
 declare const require: (id: string) => unknown
 
-// dsh-later schedule summary API (optional — gracefully degrades when absent)
-type ScheduleSummaryMap = ReadonlyMap<string, { count: number; pausedCount: number; nextAt?: number; state: 'scheduled' | 'urgent' | 'overdue' }>
-let useScheduleSummaryHook: (() => ScheduleSummaryMap | undefined) | undefined
-try {
-  const dshLater = require('dsh-later/client') as { useScheduleSummary?: () => ScheduleSummaryMap } | undefined
-  useScheduleSummaryHook = dshLater?.useScheduleSummary
-} catch {
-  // dsh-later not installed — schedule summary will be undefined
-}
-
-// dsh-gitea-dispatch waiting-review API (dsh-gitea-dispatch#16, same optional rule).
-// Its store owns the only poll of /api/gitea-dispatch/waiting, so this plugin never
-// issues that request itself: the badge costs no extra traffic.
-type WaitingReviewSummaryMap = ReadonlyMap<string, { prNumber: number; state: 'waiting' | 'overdue' }>
-let useWaitingSummaryHook: (() => WaitingReviewSummaryMap | undefined) | undefined
-try {
-  const giteaDispatch = require('dsh-gitea-dispatch/client') as { useWaitingSummary?: () => WaitingReviewSummaryMap } | undefined
-  useWaitingSummaryHook = giteaDispatch?.useWaitingSummary
-} catch {
-  // dsh-gitea-dispatch not installed — waiting review count stays 0
-}
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
@@ -72,11 +51,21 @@ import {
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
 import { directStatusesForGroups, withAggregatedStatus, type StatusedGroupNode } from '../group-status.ts'
+import { facetStore } from '../facet-store.ts'
+import { visibleFacets } from '../legacy/store-source.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
+
+// 外部状态来源：**本文件不认识任何具体插件**。运行时只有登记面（`../facets.ts`）与
+// 它背后的存储订阅；谁想让自己的状态进折叠徽标，就按协议注册一个 facet（过渡期由
+// `../legacy/bridge.ts` 代为注册现有的两家）。
+//
+// 这里只订阅一次外部存储并读一个版本号，与 facet 数量无关，所以增删来源不会改变
+// hook 调用序列（那正是逐个调 provider hook 的写法做不到的）。
+const facetsStore = facetStore()
 
 /**
  * Column slide length (--ds-transition-duration-slow): rail-search focus waits it out —
@@ -329,8 +318,15 @@ function SessionTree({
   // 徽标设置：各来源显隐、悬停明细、数字样式。
   const badgeSettings = useBadgeSettings(settings => settings)
   const statuses = useSessionStatus(s => s)
-  const scheduleSummary = useScheduleSummaryHook?.()
-  const waitingReviewSummary = useWaitingSummaryHook?.()
+  // 外部状态：一次订阅覆盖所有来源，版本号变即重渲染。`getVersion` 返回 number，
+  // 引用天然稳定，不会像"每次新建一个快照对象"那样把订阅打成死循环（React #185）。
+  useSyncExternalStore(facetsStore.subscribe, facetsStore.getVersion, facetsStore.getServerVersion)
+  // 关掉的来源在**折叠之前**就筛掉：数字、图标、aria-label、悬停明细与"要不要画徽标"
+  // 因此同源，不会出现在 label 里有、计数里没有的情况。
+  const facets = useMemo(
+    () => visibleFacets(facetsStore.list(), badgeSettings),
+    [badgeSettings],
+  )
   const current = panelActive
     ? undefined
     : Object.values(list.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
@@ -451,8 +447,10 @@ function SessionTree({
   // out), so this map is the aggregator's only data source. Expanded groups are
   // measured too; see directStatusesForGroups.
   const directStatusByGroup = useMemo(
-    () => directStatusesForGroups(groups, waitingReviewSummary, scheduleSummary),
-    [groups, waitingReviewSummary, scheduleSummary],
+    () => directStatusesForGroups(groups, facets, now),
+    // `now` 刻意不进依赖：它是渲染期的时钟读数，唯一影响的是"哪些截止还算将来"。
+    // 提供方的 store 到点会通知，需要新答案的那次渲染本来就带着新的 `now` 发生。
+    [groups, facets],
   )
 
   // Multi-level aggregation: a collapsed folder's badge covers its own members plus

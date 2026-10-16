@@ -5,36 +5,20 @@
  * vendored file only needs one import line and one field assignment to wire
  * the badge aggregation in. Everything fork-specific lives here.
  *
+ * ## 本模块不认识任何具体状态源
+ *
+ * 它只统计宿主自己的行级事实（进行中 / 待审批 / 计划待审 / 等待回答 / 已完成 /
+ * 子智能体）；外部状态一律经 `./facets.ts` 的协议折成 {@link FacetFold}。
+ *
+ * 这不是洁癖：此前这里为定时任务与等待评审各写了一组具名字段和一套查表，于是提供方
+ * 新增字段时本插件的本地类型一无所知，信息**静默丢失**（不报错、测试也不红，见
+ * CHANGELOG 0.2.3 第一条）。把语义留在拥有它的那一侧，这类漂移才结构上不可能发生。
+ *
  * @module
  */
+import type { AnyFacet, AnyFacetFold, RegisteredFacet } from './facets.ts'
+import { defaultMergeFold } from './facets.ts'
 import type { GroupNode, SessionNode } from './tree.ts'
-
-// ── Types (structurally typed to avoid compile-time dependency on cross-plugin packages) ──
-
-/**
- * One session's waiting-review fact, as published by dsh-gitea-dispatch's
- * `useWaitingSummary()` (issue: dsh-gitea-dispatch#16).
- */
-export interface WaitingReviewSummaryEntry {
-  readonly prNumber: number
-  readonly state: 'waiting' | 'overdue'
-}
-
-/** Session id → that session's waiting-review fact (no entry = not waiting). */
-export type WaitingReviewSummaryMap = ReadonlyMap<string, WaitingReviewSummaryEntry>
-
-/**
- * One session's schedule fact, as published by dsh-later's `useScheduleSummary()`.
- */
-export interface ScheduleSummaryEntry {
-  readonly count: number
-  readonly pausedCount: number
-  readonly nextAt?: number
-  readonly state: 'scheduled' | 'urgent' | 'overdue'
-}
-
-/** Session id → that session's schedule fact (no entry = no scheduled tasks). */
-export type ScheduleSummaryMap = ReadonlyMap<string, ScheduleSummaryEntry>
 
 // ── Aggregated status ──
 
@@ -55,53 +39,49 @@ export interface GroupLiveStatus {
   done: number
   /** Running direct children across members. */
   subagents: number
-  /** Members with scheduled tasks (from dsh-later). */
-  scheduledSessions: number
-  /** Total scheduled tasks across members (including paused). */
-  scheduledCount: number
-  /** Highest-priority schedule state: overdue > urgent > scheduled. */
-  scheduleState: 'scheduled' | 'urgent' | 'overdue' | undefined
-  /** Members waiting for CI review of their PR (from dsh-gitea-dispatch). */
-  waitingReviewCount: number
-  /** Highest-priority waiting state across members: overdue > waiting. */
-  waitingReviewState: 'waiting' | 'overdue' | undefined
+  /**
+   * 外部状态源的折果，按 facet id 索引，只含**有贡献**的来源（`count > 0`）。
+   *
+   * 这里刻意没有 `scheduled*` / `waitingReview*` 这类具名字段：徽标一旦为某个来源开
+   * 一个字段，就等于把别人家的语义焊进自己的类型，新增来源就得改本插件。
+   * `FacetFold.data` 的形状只有该来源自己读。
+   */
+  facets: ReadonlyMap<string, FacetEntry>
 }
+
+/**
+ * 一个来源在**这一组**上的折果，连同它自己的 facet。
+ *
+ * 带上 facet 是为了让渲染（文案、图标、脉冲）与多层合并（`facet.merge`）都不必再回
+ * 登记面查表——也就不需要任何模块级状态。
+ */
+export interface FacetEntry {
+  facet: AnyFacet
+  fold: AnyFacetFold
+}
+
+/** 空折果表：让哨兵的引用跨渲染稳定。 */
+const EMPTY_FACETS: ReadonlyMap<string, FacetEntry> = new Map()
 
 /**
  * Zero-valued sentinel for {@link GroupLiveStatus}.
  *
- * Used when a group is expanded (badge is hidden, so aggregation is wasted
- * work) or when no cross-plugin data is available. Kept as a frozen constant
- * so the reference is stable across renders — `Object.is` comparisons in
- * React selectors never trigger spurious re-renders on it.
+ * Used when a group has nothing to report. Kept as a frozen constant so the
+ * reference is stable across renders — `Object.is` comparisons in React selectors
+ * never trigger spurious re-renders on it.
  */
 export const EMPTY_LIVE_STATUS: GroupLiveStatus = Object.freeze({
   running: 0, approval: 0, planReview: 0, question: 0, done: 0, subagents: 0,
-  scheduledSessions: 0, scheduledCount: 0, scheduleState: undefined,
-  waitingReviewCount: 0, waitingReviewState: undefined,
+  facets: EMPTY_FACETS,
 }) as GroupLiveStatus
 
 /**
- * Merge two {@link GroupLiveStatus} objects by summing counters and taking the
- * highest-priority state (overdue > urgent > scheduled for schedule; overdue > waiting
- * for waiting-review).
+ * 合并两份分组折果：本插件自己的计数相加，外部状态来源**按 facet 各自合并**。
  *
- * Used for multi-level aggregation: when a parent group is collapsed, its badge
- * must reflect all descendant sessions, not just direct members.
+ * 用于多层聚合：折叠的父文件夹要覆盖整棵子树，而子树里每一层都已各自折过一遍。
+ * `FacetFold.data` 怎么合归该 facet 自己决定，本模块从不解释。
  */
 export function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLiveStatus {
-  // Schedule state: overdue (3) > urgent (2) > scheduled (1) > undefined (0)
-  const priorityOf = (s: 'scheduled' | 'urgent' | 'overdue' | undefined): number =>
-    s === 'overdue' ? 3 : s === 'urgent' ? 2 : s === 'scheduled' ? 1 : 0
-  const schedulePriorityA = priorityOf(a.scheduleState)
-  const schedulePriorityB = priorityOf(b.scheduleState)
-  const scheduleState = schedulePriorityA >= schedulePriorityB ? a.scheduleState : b.scheduleState
-
-  // Waiting-review state: overdue > waiting > undefined
-  const waitingPriorityA = a.waitingReviewState === 'overdue' ? 2 : a.waitingReviewState === 'waiting' ? 1 : 0
-  const waitingPriorityB = b.waitingReviewState === 'overdue' ? 2 : b.waitingReviewState === 'waiting' ? 1 : 0
-  const waitingReviewState = waitingPriorityA >= waitingPriorityB ? a.waitingReviewState : b.waitingReviewState
-
   return {
     running: a.running + b.running,
     approval: a.approval + b.approval,
@@ -109,26 +89,27 @@ export function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLi
     question: a.question + b.question,
     done: a.done + b.done,
     subagents: a.subagents + b.subagents,
-    scheduledSessions: a.scheduledSessions + b.scheduledSessions,
-    scheduledCount: a.scheduledCount + b.scheduledCount,
-    scheduleState,
-    waitingReviewCount: a.waitingReviewCount + b.waitingReviewCount,
-    waitingReviewState,
+    facets: mergeFacets(a.facets, b.facets),
   }
 }
 
-// ── Helpers ──
-
-/**
- * Strip the `session-` / `webhook-` prefix from a Session id.
- *
- * dsh-gitea-dispatch publishes its waiting map keyed by the host SessionId, but
- * its HTTP endpoints key by this normalized form. Accepting both here keeps the
- * badge working across that publisher's conventions without knowing which is in
- * play.
- */
-function stripSessionPrefix(id: string): string {
-  return id.replace(/^(?:session|webhook)-/, '')
+/** 按 facet id 合并两侧折果；只有一侧有的来源原样带过。 */
+function mergeFacets(
+  a: ReadonlyMap<string, FacetEntry>,
+  b: ReadonlyMap<string, FacetEntry>,
+): ReadonlyMap<string, FacetEntry> {
+  if (a.size === 0) return b
+  if (b.size === 0) return a
+  const merged = new Map<string, FacetEntry>(a)
+  for (const [id, entry] of b) {
+    const own = merged.get(id)
+    // 合并规则由该来源自己声明；缺省只加数量、取更紧急的色档、脉冲取或。
+    // 合并后仍沿用先登记那一份的 facet 引用：两侧本就是同一个来源。
+    merged.set(id, own === undefined
+      ? entry
+      : { facet: own.facet, fold: own.facet.merge?.(own.fold, entry.fold) ?? defaultMergeFold(own.fold, entry.fold) })
+  }
+  return merged
 }
 
 // ── Main computation ──
@@ -138,16 +119,18 @@ function stripSessionPrefix(id: string): string {
  * hidden live sessions. Mirrors the session-row status priority (pending
  * outranks running outranks completed) at the counting level; labels resolve with
  * locale at render time.
+ *
  * @param nodes - member rows of the group.
- * @param sessionIds - the same members' Session ids (schedule and waiting facts are keyed by id).
- * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
- * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
+ * @param sessionIds - the same members' Session ids (facets address their own data by id).
+ * @param facets - the registered status sources to fold over this group.
+ * @param now - one clock reading for the whole pass, so sibling facets cannot disagree
+ *   about which deadlines are still ahead.
  */
 export function summarizeGroupStatus(
   nodes: readonly SessionNode[],
   sessionIds: readonly string[],
-  waitingReviewSummary?: WaitingReviewSummaryMap,
-  scheduleSummary?: ScheduleSummaryMap,
+  facets: readonly RegisteredFacet[] = [],
+  now: number = Date.now(),
 ): GroupLiveStatus {
   let running = 0
   let approval = 0
@@ -165,53 +148,26 @@ export function summarizeGroupStatus(
     subagents += n.runningSubagentCount
   }
 
-  // Aggregate schedule summary from dsh-later
-  let scheduledSessions = 0
-  let scheduledCount = 0
-  let scheduleState: 'scheduled' | 'urgent' | 'overdue' | undefined = undefined
-
-  if (scheduleSummary && sessionIds.length > 0) {
-    let totalSessions = 0
-    let totalCount = 0
-    let highestPriority = 0 // 0=none, 1=scheduled, 2=urgent, 3=overdue
-
-    for (const id of sessionIds) {
-      const entry = scheduleSummary.get(id)
-      if (entry) {
-        totalSessions += 1
-        totalCount += entry.count
-        const priority = entry.state === 'overdue' ? 3 : entry.state === 'urgent' ? 2 : 1
-        if (priority > highestPriority) highestPriority = priority
-      }
+  // 外部来源逐个折。一个来源坏了不该带塌整只徽标：快照读失败按「此刻没有数据」处理，
+  // 折叠抛错则跳过该来源——两者都不往渲染管线里扩散。
+  const folded = new Map<string, FacetEntry>()
+  for (const { facet } of facets) {
+    let snapshot: unknown
+    try {
+      snapshot = facet.getSnapshot()
+    } catch {
+      snapshot = undefined
     }
-
-    scheduledSessions = totalSessions
-    scheduledCount = totalCount
-    scheduleState = highestPriority === 3 ? 'overdue' : highestPriority === 2 ? 'urgent' : highestPriority === 1 ? 'scheduled' : undefined
-  }
-
-  // Aggregate waiting-review summary from dsh-gitea-dispatch (its #16).
-  //
-  // Counts **members**, not PRs: one session waits on exactly one PR, and the
-  // badge's number must mean "how many sessions in this folder need attention".
-  // `overdue` outranks `waiting` for the dot color, mirroring the schedule rule.
-  let waitingReviewCount = 0
-  let waitingReviewState: 'waiting' | 'overdue' | undefined = undefined
-  if (waitingReviewSummary && sessionIds.length > 0) {
-    for (const id of sessionIds) {
-      const entry = waitingReviewSummary.get(id) ?? waitingReviewSummary.get(stripSessionPrefix(id))
-      if (entry === undefined) continue
-      waitingReviewCount += 1
-      if (entry.state === 'overdue') waitingReviewState = 'overdue'
-      else if (waitingReviewState === undefined) waitingReviewState = 'waiting'
+    try {
+      const result = facet.fold(snapshot, sessionIds, now)
+      // `count <= 0` 的来源不进表：数字、图标、文案、显隐判定都当它不存在。
+      if (result !== undefined && result.count > 0) folded.set(facet.id, { facet, fold: result })
+    } catch {
+      /* 同上：这个来源此刻不参与徽标 */
     }
   }
 
-  return {
-    running, approval, planReview, question, done, subagents,
-    scheduledSessions, scheduledCount, scheduleState,
-    waitingReviewCount, waitingReviewState,
-  }
+  return { running, approval, planReview, question, done, subagents, facets: folded }
 }
 
 /**
@@ -225,18 +181,18 @@ export function summarizeGroupStatus(
  * every collapsed parent undercount by the size of its expanded descendants.
  *
  * @param groups - derived groups, each with its member rows already populated.
- * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
- * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
+ * @param facets - registered sources, already filtered by the visibility settings.
+ * @param now - one clock reading shared by every group in the pass.
  */
 export function directStatusesForGroups(
   groups: readonly { key: string; sessions: readonly SessionNode[] }[],
-  waitingReviewSummary?: WaitingReviewSummaryMap,
-  scheduleSummary?: ScheduleSummaryMap,
+  facets: readonly RegisteredFacet[] = [],
+  now: number = Date.now(),
 ): Map<string, GroupLiveStatus> {
   const map = new Map<string, GroupLiveStatus>()
   for (const group of groups) {
     map.set(group.key, summarizeGroupStatus(
-      group.sessions, group.sessions.map(s => s.id), waitingReviewSummary, scheduleSummary,
+      group.sessions, group.sessions.map(s => s.id), facets, now,
     ))
   }
   return map
