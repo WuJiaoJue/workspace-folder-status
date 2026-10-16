@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- **fix** 入库的构建产物比源码陈旧：`lib/types/index.js`（`tsdown` 的打包入口）比 `src/index.ts` 少 6 个配置项，导致发布出去的 `lib/index.js` 里 `Config` 只有 `showCompletedInBadge` 一个字段——**设置界面因此只画得出 1 个开关**，其余 6 项（进行中 / 待审批 / 定时任务 / 等待评审 / 悬停明细 / 数字阈值）在界面上无法配置。徽标行为不受影响（客户端对这些字段有「缺失即回落默认」的兜底），受影响的是可配置性。根因是 `tsc` 的 `incremental` 缓存（`lib/tsconfig.tsbuildinfo`）陈旧后**静默跳过输出且退出码为 0**，产物便一直停在旧版本。已全量重建 `lib/`，并新增 `tests/artifacts.node.test.mjs` 锁住「产物存在性 + `Config` 字段与源码对齐」，同时把全量重建的写法补进 `docs/upgrading.md`。
 - **feat** 跨插件状态改为**协议**：本插件不再逐家适配，改由状态所有者注册 facet。新增 `src/client/facets.ts`（协议 v1 + 登记面）与 `docs/facet-protocol.md`（契约文档），client 入口导出 `registerGroupStatusFacet` / `GROUP_STATUS_FACET_PROTOCOL_VERSION`。加一个新状态源，本插件**零改动**。
 - **refactor** 聚合与渲染去掉所有按来源写死的分支：`GroupLiveStatus` 不再有 `scheduled*` / `waitingReview*` 具名字段，改持 `facets: Map<id, {facet, fold}>`；徽标的数字取各来源自报的 `count` 之和，图标取来源自带的 `renderIcon`（缺则按 `tone` 退通用点），文案取 `label`（缺则「N 需要关注」，绝不把内部 id 念给用户），脉冲取 `pulse`。
 - **refactor** 消费侧不再逐个调提供方 hook。facet 运行时可增删，而同一组件的 hook 序列必须恒定，逐个调会在注册面变化时直接抛 "Rendered more hooks than during the previous render"。改为订阅一个聚合外部存储 + 读版本号，与来源数量无关。

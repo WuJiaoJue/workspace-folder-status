@@ -13,6 +13,13 @@
 - **构建链**：`build/tools/` 是上游 tsdown 客户端预设拉平后的自包含副本（自解析 manifest、扁平导入、不扫 monorepo 路径）；`tsconfig.json` 是独立客户端配置，去掉了 monorepo base 与 project references。
 - **产物要提交**：`lib/` 随仓库提交，`dsh plugin --profile web add "github:dsh-plugin-collection/dsh-group-status"` 直接吃它。**改完 `src/` 必须 `pnpm build` 并一并提交 `lib/`**，否则从 GitHub 安装的人拿不到新行为。
 - **产物不是逐字节可复现的**：`lib/client.js` 里 CSS Modules 的类名哈希（如 `.eCE9Ta_…`）与 `//#region` 注释路径都跟**构建时的绝对路径**有关。同一份 `src/` 在不同 checkout（比如 issue worktree）里构建，`lib/` 会有几十行「只有哈希和路径不同」的 diff——那是噪声，不是功能差异。所以：**谁改 `src/` 谁重建并提交**，review 时不要把这种 diff 当行为变更。
+- **`tsc` 的增量缓存会静默漏产物**（2026-10-16 踩过）：`tsconfig.json` 开了 `incremental` + `composite`，缓存写在 `lib/tsconfig.tsbuildinfo`（已被 `.gitignore` 忽略，不入库）。但**本地那份会陈旧**：`tsc` 认为源文件没变就跳过输出，产物于是停在旧版本，而它**退出码仍是 0、一行错误都不报**。这次是 `lib/types/index.js`（`tsdown.config.ts` 的打包入口）比 `src/index.ts` 少 6 个配置项，`lib/index.js` 里的 `Config` 只剩 1 个字段，**设置界面因此只画得出 1 个开关**。彻底修复要**全量**重建，只删 `lib/types` 不够：
+
+  ```bash
+  rm -rf lib/types lib/tsconfig.tsbuildinfo && pnpm build
+  ```
+
+  `tests/artifacts.node.test.mjs` 已锁住这条（产物存在性 + `Config` 字段对齐），改完 `src/` 跑 `pnpm test` 就能拦住。
 
 ## 本地改动清单（rebase 时逐条重新施加）
 
