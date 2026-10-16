@@ -16,8 +16,8 @@
  * 引用——每次都构造新对象会让选择器的 `Object.is` 比较永不成立，触发
  * 「Maximum update depth exceeded」死循环（React #185），折叠行徽标会整块崩掉。
  *
- * 设置面缺席或未就绪时，回落到**默认显示已完成**，与 `Config.showCompletedInBadge` 的
- * schema 默认值同源：读不到配置不是「关掉」。
+ * 设置面缺席或未就绪时，回落到**默认全部显示**，与 `Config` 各字段的 schema 默认值同源：
+ * 读不到配置不是「关掉」。
  */
 /** Loader 条目 id —— 设置页的寻址键，也是宿主 `describe()` 的 ns。 */
 export declare const ENTRY_ID = "dsh-group-status";
@@ -35,7 +35,35 @@ export interface SettingsScopeLike {
 export interface ResolvedBadgeSettings {
     /** 折叠徽标是否显示「已完成」绿点；缺失/非法一律回落 true。 */
     showCompletedInBadge: boolean;
+    /** 折叠徽标是否显示「进行中」转圈（含子智能体）；缺失/非法一律回落 true。 */
+    showRunningInBadge: boolean;
+    /** 折叠徽标是否显示「待审批」黄点（approval / plan-review / question）；缺失/非法一律回落 true。 */
+    showPendingInBadge: boolean;
+    /** 折叠徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）；缺失/非法一律回落 true。 */
+    showScheduledInBadge: boolean;
+    /** 折叠徽标是否显示「等待评审」列表笔图标（数据来自 dsh-gitea-dispatch）；缺失/非法一律回落 true。 */
+    showWaitingReviewInBadge: boolean;
+    /** 悬停卡里是否显示聚合明细行；缺失/非法一律回落 true。 */
+    showHoverDetails: boolean;
+    /** 徽标数字显示阈值：数量 >= 此值时才显示数字；缺失/非法一律回落 2（默认 count=1 时省略）。 */
+    countThreshold: number;
 }
+/**
+ * `ResolvedBadgeSettings` 里的布尔开关键。
+ *
+ * facet 的 `settingKey` 就是它的字符串形态：状态所有者声明"我受哪个开关管"，
+ * 而开关的语义与取值仍由本插件判定。
+ */
+export type BooleanSettingKey = {
+    [K in keyof ResolvedBadgeSettings]: ResolvedBadgeSettings[K] extends boolean ? K : never;
+}[keyof ResolvedBadgeSettings];
+/**
+ * 一个 facet 是否被设置关掉。
+ *
+ * - 没有 `settingKey` → 始终参与（缺省是"显示"，与其余开关的默认值同源）。
+ * - 声明了但不是布尔开关键 → 同样按显示处理：拼错的键不该让一个状态整块消失。
+ */
+export declare function facetVisibleBySettings(settings: ResolvedBadgeSettings, settingKey: string | undefined): boolean;
 /** 标准 props 源的结构面（与 `HostObservable<ResolvedBadgeSettings>` 兼容）。 */
 export interface BadgeSettingsSource {
     getSnapshot(): ResolvedBadgeSettings;
@@ -52,7 +80,7 @@ export interface MutableBadgeSettingsSource extends BadgeSettingsSource {
      */
     publish(snapshot: SettingsSnapshotLike | undefined): void;
 }
-/** 默认值：与 `Config.showCompletedInBadge` 的 schema 默认同源（true）。 */
+/** 默认值：与 `Config` 各字段的 schema 默认同源（全部显示，数字阈值 2 即 count=1 时省略）。 */
 export declare const DEFAULT_BADGE_SETTINGS: ResolvedBadgeSettings;
 /**
  * 建一个恒在、取值稳定的徽标设置源。

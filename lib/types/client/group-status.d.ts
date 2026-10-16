@@ -1,77 +1,23 @@
+/**
+ * Fork-owned: aggregated live-status computation for collapsed workspace groups.
+ *
+ * Extracted from `tree.ts` so the upstream diff surface is minimal — the
+ * vendored file only needs one import line and one field assignment to wire
+ * the badge aggregation in. Everything fork-specific lives here.
+ *
+ * ## 本模块不认识任何具体状态源
+ *
+ * 它只统计宿主自己的行级事实（进行中 / 待审批 / 计划待审 / 等待回答 / 已完成 /
+ * 子智能体）；外部状态一律经 `./facets.ts` 的协议折成 {@link FacetFold}。
+ *
+ * 这不是洁癖：此前这里为定时任务与等待评审各写了一组具名字段和一套查表，于是提供方
+ * 新增字段时本插件的本地类型一无所知，信息**静默丢失**（不报错、测试也不红，见
+ * CHANGELOG 0.2.3 第一条）。把语义留在拥有它的那一侧，这类漂移才结构上不可能发生。
+ *
+ * @module
+ */
+import type { AnyFacet, AnyFacetFold, RegisteredFacet } from './facets.ts';
 import type { GroupNode, SessionNode } from './tree.ts';
-/**
- * One session's waiting-review fact, as published by dsh-gitea-dispatch's
- * `useWaitingSummary()` (issue: dsh-gitea-dispatch#16).
- *
- * The optional fields are part of that publisher's contract and are what lets the
- * badge say *which* PR and *how long is left*; the earlier version of this type
- * declared only `{ prNumber, state }`, so the badge silently threw away everything
- * else the publisher had already fetched for it.
- */
-export interface WaitingReviewSummaryEntry {
-    readonly prNumber: number;
-    readonly state: 'waiting' | 'overdue';
-    /** Wait start (epoch ms from the Host state, ISO string across the wire). */
-    readonly startedAt?: number | string;
-    /** CI-declared wait window (seconds); absent = the duration is unknown. */
-    readonly waitMaxSec?: number;
-    /** CI-declared absolute deadline (epoch ms); preferred over `startedAt + waitMaxSec`. */
-    readonly deadline?: number;
-}
-/** Session id → that session's waiting-review fact (no entry = not waiting). */
-export type WaitingReviewSummaryMap = ReadonlyMap<string, WaitingReviewSummaryEntry>;
-/**
- * Group-level fold of the waiting map: the shape dsh-gitea-dispatch publishes as
- * `summarizeWaitingGroup()` (issue: dsh-gitea-dispatch#16). Declared here as a
- * structural type so this plugin keeps no compile-time dependency on that package.
- */
-export interface WaitingReviewFold {
-    /** Members that are waiting. */
-    sessions: number;
-    /** PR numbers waited on, in the order the member ids were passed. */
-    prNumbers: readonly number[];
-    /** Highest-priority state across the group: overdue > waiting. */
-    state: 'waiting' | 'overdue' | undefined;
-    /** Earliest **still-future** deadline in the group; absent = nothing to count down to. */
-    nextDeadline?: number;
-}
-/**
- * The publisher's own group fold, when its client half exports one.
- *
- * Used in preference to {@link summarizeWaitingGroupLocally}: the publisher owns the
- * id conventions, the state ranking and the deadline arithmetic, so delegating keeps
- * the badge from drifting the moment any of those change. The local fold is the
- * fallback for an older publisher that exports the map but not the aggregator.
- */
-export type WaitingReviewSummarizer = (summary: WaitingReviewSummaryMap, sessionIds: readonly string[], now: number) => WaitingReviewFold;
-/**
- * Absolute deadline of one waiting entry, in epoch ms; `undefined` = unknown duration.
- *
- * Mirrors the publisher's `deadlineOf` on purpose (absolute CI deadline first, only
- * then `startedAt + waitMaxSec`): the CI's own wait starts *before* the broadcast
- * reaches us, so a duration-only fallback would run the badge's countdown long past
- * the real deadline. Both `startedAt` shapes are accepted for the same reason.
- */
-export declare function waitingDeadlineOf(entry: WaitingReviewSummaryEntry): number | undefined;
-/**
- * Local stand-in for the publisher's group fold; see {@link WaitingReviewSummarizer}.
- *
- * Same lookup tolerance (all four id spellings, through `cross-plugin-summary`'s
- * `entryFor`, which is the publisher's `waitingEntryFor` rule), same ranking
- * (overdue outranks waiting), same "only future deadlines" rule for `nextDeadline`.
- */
-export declare function summarizeWaitingGroupLocally(summary: WaitingReviewSummaryMap, sessionIds: readonly string[], now: number): WaitingReviewFold;
-/**
- * One session's schedule fact, as published by dsh-later's `useScheduleSummary()`.
- */
-export interface ScheduleSummaryEntry {
-    readonly count: number;
-    readonly pausedCount: number;
-    readonly nextAt?: number;
-    readonly state: 'scheduled' | 'urgent' | 'overdue';
-}
-/** Session id → that session's schedule fact (no entry = no scheduled tasks). */
-export type ScheduleSummaryMap = ReadonlyMap<string, ScheduleSummaryEntry>;
 /**
  * Aggregated live-session counts for one group, computed over all members so a
  * folded folder row can hint at hidden activity.
@@ -89,47 +35,38 @@ export interface GroupLiveStatus {
     done: number;
     /** Running direct children across members. */
     subagents: number;
-    /** Members with scheduled tasks (from dsh-later). */
-    scheduledSessions: number;
-    /** Total scheduled tasks across members (including paused). */
-    scheduledCount: number;
-    /** Highest-priority schedule state: overdue > urgent > scheduled. */
-    scheduleState: 'scheduled' | 'urgent' | 'overdue' | undefined;
-    /** Members waiting for CI review of their PR (from dsh-gitea-dispatch). */
-    waitingReviewCount: number;
-    /** Highest-priority waiting state across members: overdue > waiting. */
-    waitingReviewState: 'waiting' | 'overdue' | undefined;
     /**
-     * PR numbers the group is waiting on, one per waiting member (the publisher lists a PR
-     * **per member**, so two members waiting on the same PR arrive twice, which is correct
-     * here, and `badge-labels.ts` collapses them where the label reads). Folding folders
-     * unions and sorts. Without this field the badge could say *that* a member waits but
-     * never *what* it waits for.
+     * 外部状态源的折果，按 facet id 索引，只含**有贡献**的来源（`count > 0`）。
+     *
+     * 这里刻意没有 `scheduled*` / `waitingReview*` 这类具名字段：徽标一旦为某个来源开
+     * 一个字段，就等于把别人家的语义焊进自己的类型，新增来源就得改本插件。
+     * `FacetFold.data` 的形状只有该来源自己读。
      */
-    waitingReviewPrNumbers: readonly number[];
-    /**
-     * Earliest still-future deadline across the group's waiting members (epoch ms).
-     * Absent when every wait has an unknown duration or has already lapsed, which is
-     * exactly when the badge must not render a countdown.
-     */
-    waitingReviewNextDeadline: number | undefined;
+    facets: ReadonlyMap<string, FacetEntry>;
+}
+/**
+ * 一个来源在**这一组**上的折果，连同它自己的 facet。
+ *
+ * 带上 facet 是为了让渲染（文案、图标、脉冲）与多层合并（`facet.merge`）都不必再回
+ * 登记面查表——也就不需要任何模块级状态。
+ */
+export interface FacetEntry {
+    facet: AnyFacet;
+    fold: AnyFacetFold;
 }
 /**
  * Zero-valued sentinel for {@link GroupLiveStatus}.
  *
- * Used when a group is expanded (badge is hidden, so aggregation is wasted
- * work) or when no cross-plugin data is available. Kept as a frozen constant
- * so the reference is stable across renders — `Object.is` comparisons in
- * React selectors never trigger spurious re-renders on it.
+ * Used when a group has nothing to report. Kept as a frozen constant so the
+ * reference is stable across renders — `Object.is` comparisons in React selectors
+ * never trigger spurious re-renders on it.
  */
 export declare const EMPTY_LIVE_STATUS: GroupLiveStatus;
 /**
- * Merge two {@link GroupLiveStatus} objects by summing counters and taking the
- * highest-priority state (overdue > urgent > scheduled for schedule; overdue > waiting
- * for waiting-review).
+ * 合并两份分组折果：本插件自己的计数相加，外部状态来源**按 facet 各自合并**。
  *
- * Used for multi-level aggregation: when a parent group is collapsed, its badge
- * must reflect all descendant sessions, not just direct members.
+ * 用于多层聚合：折叠的父文件夹要覆盖整棵子树，而子树里每一层都已各自折过一遍。
+ * `FacetFold.data` 怎么合归该 facet 自己决定，本模块从不解释。
  */
 export declare function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLiveStatus;
 /**
@@ -137,14 +74,14 @@ export declare function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus):
  * hidden live sessions. Mirrors the session-row status priority (pending
  * outranks running outranks completed) at the counting level; labels resolve with
  * locale at render time.
+ *
  * @param nodes - member rows of the group.
- * @param sessionIds - the same members' Session ids (schedule and waiting facts are keyed by id).
- * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
- * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
- * @param now - epoch ms used by the waiting fold to decide which deadlines are still future.
- * @param waitingReviewSummarize - the publisher's own group fold, when it publishes one.
+ * @param sessionIds - the same members' Session ids (facets address their own data by id).
+ * @param facets - the registered status sources to fold over this group.
+ * @param now - one clock reading for the whole pass, so sibling facets cannot disagree
+ *   about which deadlines are still ahead.
  */
-export declare function summarizeGroupStatus(nodes: readonly SessionNode[], sessionIds: readonly string[], waitingReviewSummary?: WaitingReviewSummaryMap, scheduleSummary?: ScheduleSummaryMap, now?: number, waitingReviewSummarize?: WaitingReviewSummarizer): GroupLiveStatus;
+export declare function summarizeGroupStatus(nodes: readonly SessionNode[], sessionIds: readonly string[], facets?: readonly RegisteredFacet[], now?: number): GroupLiveStatus;
 /**
  * Measure each group's own members, as the input to {@link aggregateGroupStatuses}.
  *
@@ -156,16 +93,13 @@ export declare function summarizeGroupStatus(nodes: readonly SessionNode[], sess
  * every collapsed parent undercount by the size of its expanded descendants.
  *
  * @param groups - derived groups, each with its member rows already populated.
- * @param waitingReviewSummary - dsh-gitea-dispatch waiting map, when that plugin is loaded.
- * @param scheduleSummary - dsh-later schedule map, when that plugin is loaded.
- * @param now - one clock reading shared by every group in the pass, so sibling badges
- *   cannot disagree about which deadlines are still ahead.
- * @param waitingReviewSummarize - dsh-gitea-dispatch's own group fold, when it exports one.
+ * @param facets - registered sources, already filtered by the visibility settings.
+ * @param now - one clock reading shared by every group in the pass.
  */
 export declare function directStatusesForGroups(groups: readonly {
     key: string;
     sessions: readonly SessionNode[];
-}[], waitingReviewSummary?: WaitingReviewSummaryMap, scheduleSummary?: ScheduleSummaryMap, now?: number, waitingReviewSummarize?: WaitingReviewSummarizer): Map<string, GroupLiveStatus>;
+}[], facets?: readonly RegisteredFacet[], now?: number): Map<string, GroupLiveStatus>;
 /**
  * Fold every group's DIRECT status up the workspace tree, so a collapsed folder
  * counts every descendant session. A group's own row shows no badge while it is
