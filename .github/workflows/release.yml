@@ -1,20 +1,24 @@
-# 由 release-infra 安装（2026-10-19）。触发：推 v* tag。
-# npm 走 Trusted Publishing（OIDC），仓库里不存 token。
+# 由 release-infra 安装（2026-10-19）。npm 走 Trusted Publishing（OIDC），仓库里不存 token。
 #
-# ⚠ 本文件落地即生效，但发布总闸默认关：仓库 variable `RELEASE_AUTOMATION` 未设为
-#   'true' 时 publish job 整段跳过。为什么：org 是 free plan，**tag protection rules 不可用**，
-#   任何能推 tag 的人都能触发发布；而 environment 审查人在配置前不存在。所以先关着，
-#   等下面两件事配好再打开：
-#     1) npmjs.com → dsh-group-status → Settings → Publishing access → Trusted publisher
-#        → GitHub Actions：owner=dsh-plugin-collection  name=dsh-group-status
-#          Workflow name=release.yml（必须与文件名逐字相同）  Events=push
-#     2) GitHub → Settings → Environments → 新建 `release` → Required reviewers 加人
-#   然后：gh variable set RELEASE_AUTOMATION --repo dsh-plugin-collection/dsh-group-status --body true
+# 两种触发：
+#   push tag v*            自动发布。受总闸管：仓库 variable RELEASE_AUTOMATION 不为 'true' 时整段跳过。
+#   workflow_dispatch+tag  对**已存在的 tag** 手动补跑。dispatch 本身就是人的明确动作，
+#                          所以它不受总闸限制（这是有意的：总闸挡的是"自动"路径）。
+#
+# 为什么总闸必须存在：org 是 free plan，**tag protection rules 不可用**（实测 API 404），
+# 任何能推 tag 的人都等于能发 npm，而 environment 审查人在配置前不存在。
+# 打开自动路径：gh variable set RELEASE_AUTOMATION --repo <owner>/<repo> --body true
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '对已存在的 tag 补跑发布，例：v0.2.2'
+        required: true
+        type: string
 
 permissions:
   contents: write # 建 GitHub Release
@@ -27,17 +31,33 @@ concurrency:
 
 jobs:
   publish:
-    name: 发布 ${{ github.ref_name }}
-    if: vars.RELEASE_AUTOMATION == 'true'
+    name: 发布
+    if: vars.RELEASE_AUTOMATION == 'true' || github.event_name == 'workflow_dispatch'
     environment: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 解析目标 tag：push 事件用 ref_name；dispatch 用输入。后面所有步骤都以它为准，
+      # 避免出现"跑在分支上却按分支的 package.json 发版"这种错位。
+      - name: 解析目标 tag
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSH_TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          if [ "$EVENT" = workflow_dispatch ]; then T="$INPUT_TAG"; else T="$PUSH_TAG"; fi
+          case "$T" in
+            v[0-9]*) : ;;
+            *) echo "::error::tag 必须以 v+数字 开头，拿到「$T」"; exit 1 ;;
+          esac
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          echo "version=${T#v}" >> "$GITHUB_OUTPUT"
+          echo "目标 tag：$T（版本 ${T#v}）"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: 22
-          registry-url: 'https://registry.npmjs.org'
+          ref: ${{ steps.target.outputs.tag }}
 
       # trusted publishing 要求 npm CLI ≥ 11.5.1；node 22 自带 10.x，不升级会直接认证失败
       - name: npm CLI ≥ 11.5.1
@@ -58,6 +78,15 @@ jobs:
             if (!p.dsh?.bundle) console.error('::warning::缺 dsh.bundle 声明，不会被市场收录');
           "
 
+      - name: 版本与 tag 必须一致
+        # 防止"检出错树"：tag 说 0.2.2 而 package.json 说别的，发出去就是错版本
+        env:
+          VER: ${{ steps.target.outputs.version }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          [ "$V" = "$VER" ] || { echo "::error::tag=$VER 但 package.json version=$V"; exit 1; }
+          echo "✔ package.json version = $V"
+
       - name: prepare 钩子检查
         # 实测 npm 10.9.7：prepare 不受 --ignore-scripts 抑制，会在这里执行并改写 lib/
         run: |
@@ -69,13 +98,14 @@ jobs:
             }
           "
 
-      - name: 是否已发布过（重跑不报红）
+      - name: 是否已发布过（重跑不报红，也让补跑旧 tag 天然安全）
         id: dup
+        env:
+          VER: ${{ steps.target.outputs.version }}
         run: |
-          V=$(node -p "require('./package.json').version")
           N=$(node -p "require('./package.json').name")
-          if curl -sf "https://registry.npmjs.org/$N/$V" >/dev/null; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "已存在 $N@$V，跳过发布"
+          if curl -sf "https://registry.npmjs.org/$N/$VER" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "已存在 $N@$VER → 跳过发布（本次只补 Release）"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -87,17 +117,34 @@ jobs:
         run: npm publish --ignore-scripts
 
       - name: 生成 release notes
-        run: node .github/extract-notes.mjs "${GITHUB_REF_NAME#v}" --intro > notes.md
+        env:
+          VER: ${{ steps.target.outputs.version }}
+        run: |
+          set -e
+          if [ -f .github/extract-notes.mjs ]; then
+            node .github/extract-notes.mjs "$VER" --intro > notes.md
+          else
+            # 检出的 tag 早于 .github/ 落地（例如给历史版本补 Release），提取器不存在。
+            # 优雅降级，不把一次"补 Release"变成一次红。
+            {
+              node -p "const p=require('./package.json'); (p.description??'')+'\n\n## 安装\n\n\`\`\`sh\ndsh plugin --profile web add '+p.name+'\n\`\`\`'"
+              printf '\n## 本版本变更\n\n_(该 tag 检出时还没有 .github/extract-notes.mjs，且 CHANGELOG 未记录 %s 小节；请按需补写)_\n' "$VER"
+            } > notes.md
+            echo "::notice::检出树里没有提取器，notes 走降级文案"
+          fi
+          echo "--- notes 预览 ---"; head -14 notes.md
 
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -e
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME 已存在，跳过"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，跳过创建（要改正文用 gh release edit）"
           else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "dsh-group-status $GITHUB_REF_NAME" \
+            gh release create "$TAG" \
+              --title "${{ github.event.repository.name }} $TAG" \
               --notes-file notes.md --latest
+            gh release view "$TAG" --json url,tagName,isLatest -q '"✔ " + .url + "  tag=" + .tagName + "  latest=" + (.isLatest|tostring)'
           fi
