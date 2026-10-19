@@ -1,4 +1,7 @@
-node_modules/
+# 不带尾斜杠：worktree 里的 node_modules 常常是指向别处的**软链**（各 issue 工作树都这么建），
+# `node_modules/` 只匹配目录形态，软链会一直冒出来当未跟踪文件，于是 `git add -A` 有把它
+# 提交进去的风险。同一族问题已在 dsh-gitea-dispatch 的 .gitignore 里写明并修掉。
+node_modules
 *.log
 .DS_Store
 *.tsbuildinfo

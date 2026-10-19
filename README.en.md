@@ -44,7 +44,7 @@ Fold any group that has live sessions; a badge appears after the folder name:
 | Spinner | Running sessions inside, incl. running subagents | ongoing (`StateDot` animation) |
 | Green dot | Completed-unread sessions inside | done (same as the row) |
 | Clock | Scheduled tasks inside (data from dsh-later) | purple · orange (≤5 min) · red (overdue) |
-| List-pen | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (the CI wait window lapsed) |
+| Hourglass | Sessions waiting for a PR review (data from dsh-gitea-dispatch) | amber · red (the CI wait window lapsed) |
 
 Rules:
 
@@ -65,7 +65,7 @@ Rules:
 | `showPendingInBadge` | `true` | Whether the folded badge shows the "pending" yellow dot (approval / plan review / waiting for answer) |
 | `showCompletedInBadge` | `true` | Whether the folded badge shows a green "completed" dot |
 | `showScheduledInBadge` | `true` | Whether the folded badge shows the "scheduled" clock icon (data from dsh-later) |
-| `showWaitingReviewInBadge` | `true` | Whether the folded badge shows the "waiting for review" list-pen icon (data from dsh-gitea-dispatch) |
+| `showWaitingReviewInBadge` | `true` | Whether the folded badge shows the "waiting for review" hourglass icon (data from dsh-gitea-dispatch) |
 | `showHoverDetails` | `true` | Whether the hover card shows the aggregated status detail lines |
 | `countThreshold` | `2` | The count is shown on the badge only when the total is >= this value (default 2, i.e. omits the count when it equals 1 — the dots already convey "something is happening"; set to 1 to always show) |
 
