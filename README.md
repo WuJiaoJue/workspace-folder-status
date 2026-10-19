@@ -90,7 +90,9 @@
 
 ## 跨插件状态：facet 协议
 
-折叠分组徽标可以显示**别的插件**的状态。方向是反的：**状态所有者把自己的事实注册进来**，本插件不为任何具体插件写适配。完整契约见 [docs/facet-protocol.md](docs/facet-protocol.md)。
+折叠分组徽标可以显示**别的插件**的状态。方向是反的：**状态所有者把自己的事实注册进来**，本插件的聚合与渲染路径**不认识任何具体来源**（无一处按来源写分支）。完整契约见 [docs/facet-protocol.md](docs/facet-protocol.md)。
+
+两处尚未收口的例外，都是过渡期的：`legacy/` 目录仍为 dsh-later 与 dsh-gitea-dispatch 各代管一个适配器（对方自注册同名 facet 后按 `FACET_ORIGIN_RANK` 自动让位，随即删除）；这两个来源各有一个专用设置项，加**第三个**独立开关仍需改本插件 14 个改动点（成本与收口方案见该文档的「已知取舍」）。
 
 ```js
 const gs = require('dsh-group-status/client')

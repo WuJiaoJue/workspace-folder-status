@@ -155,8 +155,24 @@ true` 不会让你的图标跟着呼吸，你声明 `pulse: false` 也不会因�
 
 ## 已知取舍
 
-- **新 facet 默认没有用户开关**。`settingKey` 只能挂到本插件已有的布尔开关上；要为一
-  个新状态加独立开关，需在本插件的 `Config` schema 里加字段（一处声明，不改逻辑）。
+- **新 facet 默认没有用户开关**。`settingKey` 只能挂到本插件已有的布尔开关上。两条路：
+
+  - **省略 `settingKey`（推荐）**：你的来源始终参与徽标，本插件**零改动**。缺省是"显示"，
+    与其余开关的默认值同源，所以这不是降级路径，而是常态路径。
+  - **要一个独立开关**：需要在**本插件**加一个布尔设置项。成本不是"一处声明"，实测是
+    **14 个改动点、5 个文件**（10 处代码 + 4 条文案）：`src/index.ts`（schema 字段 +
+    `Config` 接口）2 处、`src/client/badge-settings.ts`（接口 + 默认值 + 相等判断 +
+    resolve）4 处、`src/client/badge-field.ts`（`BADGE_FIELDS` + 字段 spec +
+    `ALL_BADGE_FIELDS`）3 处、`src/client/BadgeSettingsCard.tsx`（一行 `<ToggleRow>`）
+    1 处、`src/client/locales.ts`（zh/en 各一条 label + hint）4 条字符串。
+
+  这个成本是**已知设计债**，根因是 `Config` 在服务端静态声明、而 facet 在客户端运行时注册，
+  两边永远错开一个时序。收口的方向是把这 N 个布尔换成一个泛化字段
+  （`facetToggles: Schema.dict(string, boolean)`，声明一次后不再改动，设置卡片改为遍历
+  registry 渲染），读取路径其实已经动态了——`facetVisibleBySettings` 收的是 `string`、
+  运行时查表、未知键回落 true，且这两个既有开关在全仓库只有 `visibleFacets` 一个功能读取点。
+  尚未实施是因为它需要协议新增一个可选的 `settingName`（设置项标题不能复用 `label`，那是
+  状态句子），并要求对已持久化的旧布尔做迁移；在出现第三个来源之前，这笔成本不划算。
 - **宿主会话状态在明细里只有 warning / ongoing / done 三档点**（这三档是宿主的语义，本
   插件无权增减）。**外部来源不适用这条限制**：`renderIcon` 交出的图标在徽标与悬停明细两
   处都会渲染，所以 `tone: 'error'` 由你自己的图标色档表达，不靠文案自救（#24）。没交
