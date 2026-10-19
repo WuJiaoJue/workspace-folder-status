@@ -1,0 +1,108 @@
+# 由 release-infra 安装（2026-10-19）。只拦错，不碰发布。
+# 严格程度是实测出来的，不是猜的：
+#   - 本仓库 `npx tsc -p tsconfig.json --noEmit` 干净通过
+#   - `npm test` 本地 174 例 1.4s 全过，且不在仓库留下改动
+#   - 干净重建后 `lib/` 与提交产物**逐字节一致（0 个文件差异）** → 漂移守卫可 blocking
+# 若将来 tsdown/typescript 版本变更导致重建不再一致，先把 artifact-drift 降级为
+# continue-on-error，别让它挡住无关 PR。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: node:22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: 安装依赖
+        # 这里**不能**加 --ignore-scripts：tsdown 的原生二进制靠安装脚本落地
+        run: pnpm install --frozen-lockfile
+      - name: 类型检查
+        run: npx tsc -p tsconfig.json --noEmit
+      - name: 测试
+        run: npm test
+
+  # 只读守卫：不装依赖、不跑构建，永远不会改写工作区
+  release-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: repository.url 的 owner/repo 必须等于本仓库
+        # 破了它，catalog 的 probe 判 false → 市场版本号/下载量消失
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const url = p.repository?.url || '';
+            const want = process.env.GITHUB_REPOSITORY.toLowerCase();
+            if (!url) { console.error('::error::缺 repository.url'); process.exit(1); }
+            if (!url.toLowerCase().includes(want)) {
+              console.error('::error::repository.url=' + url + ' 不含 ' + want);
+              process.exit(1);
+            }
+          "
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+      - name: prepare 钩子会破坏 --ignore-scripts 发布法
+        run: |
+          node -e "
+            const p = require('./package.json');
+            if (p.scripts?.prepare) {
+              console.error('::error::有 prepare 钩子，请把构建移到 prepack / prepublishOnly');
+              process.exit(1);
+            }
+          "
+      - name: 入口产物已被 git 跟踪
+        run: |
+          node -e "
+            const p = require('./package.json');
+            if (!p.main) process.exit(0);
+            const { execSync } = require('node:child_process');
+            if (!execSync('git ls-files ' + p.main).toString().trim()) {
+              console.error('::error::' + p.main + ' 未被跟踪（约定：产物随源码提交）');
+              process.exit(1);
+            }
+          "
+      - name: CHANGELOG 有「未发布」节可写
+        # 发版时要把它改名成版本节，否则 release notes 无源
+        run: |
+          grep -qE '^##[ \t]+\[?(未发布|Unreleased)\]?[ \t]*$' CHANGELOG.md || {
+            echo "::error::CHANGELOG 没有「未发布」小节，发版时无处写 notes"
+            exit 1
+          }
+
+  artifact-drift:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm install --frozen-lockfile
+      - name: 重新构建
+        run: npm run build
+      - name: lib/ 是否与提交一致
+        run: |
+          if ! git diff --quiet -- lib/; then
+            echo "::error title=lib/ 落后于 src::干净检出后重建，lib/ 与提交产物不一致。改 src/ 必须同 PR 重建 lib/。"
+            git diff --stat -- lib/
+            exit 1
+          fi
+          echo "lib/ 与 src/ 一致"

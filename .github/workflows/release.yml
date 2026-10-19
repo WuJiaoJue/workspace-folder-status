@@ -1,0 +1,103 @@
+# 由 release-infra 安装（2026-10-19）。触发：推 v* tag。
+# npm 走 Trusted Publishing（OIDC），仓库里不存 token。
+#
+# ⚠ 本文件落地即生效，但发布总闸默认关：仓库 variable `RELEASE_AUTOMATION` 未设为
+#   'true' 时 publish job 整段跳过。为什么：org 是 free plan，**tag protection rules 不可用**，
+#   任何能推 tag 的人都能触发发布；而 environment 审查人在配置前不存在。所以先关着，
+#   等下面两件事配好再打开：
+#     1) npmjs.com → dsh-group-status → Settings → Publishing access → Trusted publisher
+#        → GitHub Actions：owner=dsh-plugin-collection  name=dsh-group-status
+#          Workflow name=release.yml（必须与文件名逐字相同）  Events=push
+#     2) GitHub → Settings → Environments → 新建 `release` → Required reviewers 加人
+#   然后：gh variable set RELEASE_AUTOMATION --repo dsh-plugin-collection/dsh-group-status --body true
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # 建 GitHub Release
+  id-token: write # OIDC → npm trusted publishing
+
+# 连打两个 tag 时串行，别并发往 registry 挤
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 发布 ${{ github.ref_name }}
+    if: vars.RELEASE_AUTOMATION == 'true'
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # trusted publishing 要求 npm CLI ≥ 11.5.1；node 22 自带 10.x，不升级会直接认证失败
+      - name: npm CLI ≥ 11.5.1
+        run: npm install -g npm@11
+
+      - name: 关联不变式 —— repository.url 必须含本仓库 owner/repo
+        # 破了它，awesome-dsh-plugin 的 probe 判 false，市场版本号/下载量会消失
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const url = p.repository?.url || '';
+            const want = process.env.GITHUB_REPOSITORY.toLowerCase();
+            if (!url) { console.error('::error::缺 repository.url'); process.exit(1); }
+            if (!url.toLowerCase().includes(want)) {
+              console.error('::error::repository.url=' + url + ' 不含 ' + want);
+              process.exit(1);
+            }
+            if (!p.dsh?.bundle) console.error('::warning::缺 dsh.bundle 声明，不会被市场收录');
+          "
+
+      - name: prepare 钩子检查
+        # 实测 npm 10.9.7：prepare 不受 --ignore-scripts 抑制，会在这里执行并改写 lib/
+        run: |
+          node -e "
+            const p = require('./package.json');
+            if (p.scripts?.prepare) {
+              console.error('::error::本包有 prepare 钩子，--ignore-scripts 拦不住它。请把构建移到 prepack / prepublishOnly。');
+              process.exit(1);
+            }
+          "
+
+      - name: 是否已发布过（重跑不报红）
+        id: dup
+        run: |
+          V=$(node -p "require('./package.json').version")
+          N=$(node -p "require('./package.json').name")
+          if curl -sf "https://registry.npmjs.org/$N/$V" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "已存在 $N@$V，跳过发布"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 发的是仓库里已提交的 lib/，**不在 CI 重新构建**：否则 tarball 与 git 里的 lib/
+      # 不再等价，「committed lib/ 即发布物」这条会被工具链版本漂移悄悄破坏。
+      - name: npm publish
+        if: steps.dup.outputs.skip == 'false'
+        run: npm publish --ignore-scripts
+
+      - name: 生成 release notes
+        run: node .github/extract-notes.mjs "${GITHUB_REF_NAME#v}" --intro > notes.md
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在，跳过"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "dsh-group-status $GITHUB_REF_NAME" \
+              --notes-file notes.md --latest
+          fi
