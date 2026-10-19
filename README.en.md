@@ -88,7 +88,9 @@ Saving applies it live, with no refresh; the Host writes it into the profile pat
 
 ## Cross-plugin status: the facet protocol
 
-A folded group badge can show state owned by **another plugin**. The direction is inverted: **the owner registers its facts in**, and this plugin writes no adapter for any specific plugin. The full contract lives in [docs/facet-protocol.md](docs/facet-protocol.md).
+A folded group badge can show state owned by **another plugin**. The direction is inverted: **the owner registers its facts in**, and this plugin's aggregation and render paths **know no specific source** (not one branch keyed on who is reporting). The full contract lives in [docs/facet-protocol.md](docs/facet-protocol.md).
+
+Two exceptions remain open, both transitional: the `legacy/` directory still houses one proxy adapter each for dsh-later and dsh-gitea-dispatch (each yields automatically via `FACET_ORIGIN_RANK` once the owner registers a facet under the same id, at which point the directory goes away); and those two sources each own a dedicated setting, so adding a **third** toggle still means 14 touchpoints in this plugin (cost and the planned consolidation are in that document's final section, 「已知取舍」 — the contract docs are Chinese-only).
 
 ```js
 const gs = require('dsh-group-status/client')
