@@ -2,9 +2,9 @@
 # 严格程度是实测出来的，不是猜的：
 #   - 本仓库 `npx tsc -p tsconfig.json --noEmit` 干净通过
 #   - `npm test` 本地 174 例 1.4s 全过，且不在仓库留下改动
-#   - 干净重建后 `lib/` 与提交产物一致 —— 但**必须排除 `lib/client.js`**，见 artifact-drift。
-# 依据（实测）：0.2.2 树原始差异只有 lib/client.js 一个文件；排除后为 0。
-# 0.2.0 树（src 改了没重建 lib）排除后仍有 27 个文件被抓到。所以排除不是放水，是去掉唯一的噪声源。
+#   - 干净重建后 `lib/` 与提交产物**逐字节一致**（跨目录实测），所以漂移守卫无需任何排除。
+# 这条在 fix/build-css-identity 之前是做不到排除的：tsdown 的 CSS module 前缀由构建机
+# 绝对路径导出，lib/client.js 在任何别处重建都必然不同。构建器修好后排除项一并撤掉。
 name: ci
 
 on:
@@ -98,26 +98,41 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 重新构建
         run: npm run build
-      - name: lib/ 是否与提交一致（排除 lib/client.js）
-        # 为什么排除 lib/client.js：tsdown 的 CSS module 类名前缀是**由构建机绝对路径哈希**
-        # 出来的（实测同版本 tsdown 0.22.14，在 /tmp 重建得到 Rm17ta_，在开发机是 EgC0Ja_），
-        # 所以这个文件在任何机器上重建都必然不同 —— 它不是"落后"信号，是纯噪声。
-        # 顺带暴露的真问题见下面 path-leak 一步。
+      - name: lib/ 是否与提交一致
         run: |
-          if ! git diff --quiet -- lib/ ':(exclude)lib/client.js'; then
+          if ! git diff --quiet -- lib/; then
             echo "::error title=lib/ 落后于 src::干净检出后重建，lib/ 与提交产物不一致。改 src/ 必须同 PR 重建 lib/。"
-            git diff --stat -- lib/ ':(exclude)lib/client.js'
+            git diff --stat -- lib/
             exit 1
           fi
-          echo "✔ lib/（除 client.js）与 src/ 一致"
-      - name: 产物里是否泄漏构建机绝对路径
-        # 已核实：已发布的 dsh-group-status@0.2.2 的 lib/client.js 里有 5 处
-        # /home/<user>/workspace/... 。dsh-later@1.4.0 与 dsh-suggest-ghost@0.5.1 均为 0 处。
-        # 现在是 warning：把构建改成按相对路径/内容哈希之前，这条必然红，先别挡 PR。
+          echo "✔ lib/ 与 src/ 逐字节一致"
+      - name: 产物里不得含构建机绝对路径
+        # 背景：已发布的 dsh-group-status@0.2.2 里 lib/client.js 有 5 处 /home/<user>/…
+        # （dsh-later@1.4.0 与 dsh-suggest-ghost@0.5.1 均为 0 处）。根因在
+        # build/tools/tsdown.client.ts 的 CSS 虚拟模块 id，已由 fix/build-css-identity 修掉，
+        # 所以这条可以 blocking —— 回归即挡。
         run: |
-          n=$(grep -roE "/home/[A-Za-z0-9_.-]+/" lib/ 2>/dev/null | wc -l)
+          n=$(grep -rnoE "/home/[A-Za-z0-9_.-]+/" lib/ 2>/dev/null | wc -l)
           if [ "$n" -gt 0 ]; then
-            echo "::warning title=产物含构建机绝对路径::lib/ 里有 $n 处 /home/... 路径会被发进 npm 包。修构建器后可把本步改为 blocking。"
+            echo "::error title=产物泄漏构建机路径::lib/ 里有 $n 处 /home/... 会被发进 npm 包。"
+            grep -rlE "/home/[A-Za-z0-9_.-]+/" lib/ | sed 's/^/    /'
+            exit 1
+          fi
+          echo "✔ 无绝对路径泄漏"
+      - name: CSS module 前缀必须可复现
+        # 类名前缀是 lightningcss 对**仓库相对**样式表路径取哈希得来的；若哪天又退回绝对路径，
+        # 同一 commit 在不同目录会产出不同前缀。把整棵树搬到另一个路径再构建一次即可验证，
+        # 复用已装好的依赖（pnpm 的 node_modules 是指向 store 的符号链接，cp -a 保留后仍可解析）。
+        run: |
+          set -e
+          copy=$(mktemp -d)/moved/deep
+          mkdir -p "$(dirname "$copy")"
+          cp -a "$GITHUB_WORKSPACE" "$copy"
+          ( cd "$copy" && npm run build >/dev/null )
+          if diff -rq "$GITHUB_WORKSPACE/lib" "$copy/lib" >/dev/null; then
+            echo "✔ 同一 commit 在两个不同目录构建，lib/ 逐字节一致"
           else
-            echo "✔ 无绝对路径泄漏"
+            echo "::error title=产物不可复现::换个目录构建就得到不同的 lib/ —— CSS 前缀大概又用上了绝对路径。"
+            diff -rq "$GITHUB_WORKSPACE/lib" "$copy/lib" | head -5
+            exit 1
           fi
