@@ -4,6 +4,18 @@
 
 ## 未发布
 
+### 由 dsh-gitea-dispatch 提出的四个问题（#22 / #23 / #24 / #25）
+
+- **fix** 脉冲作用在**整只**徽标上，同组里任何一家声明 `pulse: true` 就让别家本该静止的图标跟着呼吸（[Issues #22](http://192.168.4.77:3000/dsh-plugins/dsh-group-status/issues/22)）。此前只把**判据**交出去了（`fold.pulse`），**作用对象**仍留在徽标容器上，于是 `pulse: false` 是否生效取决于同组里恰好有没有别人开闪——「等待评审超时不闪」这条承诺（README 与 `badge-labels.ts` 注释都写着）会悄悄失效，而提供方无从发现：它交出了 `pulse: false`、自己的 CSS 里零 `animation`，失效完全发生在本仓库的容器 class 上。现在判据与作用对象一起下沉到**声明它的那个元素**（`facetPulseClass` 取代 `groupBadgeIsUrgent`），计数数字与宿主会话状态点任何时候都不再继承来源的紧急程度。`docs/facet-protocol.md` 同步改写 `pulse` 的语义。
+- **fix** 悬停明细不渲染 provider 的图标，只画一个统一 `StateDot`，而写着这件事的注释理由是「紧急程度由文案与**图标色**表达」——明细里根本没有图标色，这个前提不存在（[Issues #24](http://192.168.4.77:3000/dsh-plugins/dsh-group-status/issues/24)）。结果是同一条状态、同一次悬停里，徽标上是红色沙漏、明细里是黄点：徽标与明细是**同一行的两个视图**却各说一套。宿主 `StateDot` 只有 warning / ongoing / done 三档、没有 error 档，所以色档只能由来源自己的图标表达；现在明细行与徽标用**同一个** `facetGlyph` 元素（`HoverStatusLine` 新增可选 `glyph`，provider 未交 `renderIcon` 时两处同款退回通用点）。`docs/facet-protocol.md` 的「已知取舍」改写成与实现一致。
+- **refactor** 同一事实两份实现，四处（[Issues #25](http://192.168.4.77:3000/dsh-plugins/dsh-group-status/issues/25)）：
+  - **点行顺序 ≠ 明细顺序**，而注释声称两者「完全一致」。徽标是 pending → active → **done** → facet，明细是 pending → active → **facet** → done。点行按明细对齐，注释与实现从此同一条来源。
+  - **状态优先级两份实现，结果不同**。徽标计数在 pending 分支里 `continue` 掉 `subagents += n.runningSubagentCount`（行内却给两个点），且未运行但已完成 + 有运行中子智能体时两处判断相反（徽标凭空多一枚绿点并计入数字）——`GroupBadge.tsx` 里「数字 = 进行中（**含子智能体**）」此前是空头承诺。计数判据改为与行内 `sessionStatuses()` 同一套规则，两处分歧各配一条回归测试。**这是行为变更**：折叠徽标的数字可能变大。
+  - **一次渲染两个时钟**。`groupLiveBadge` 与 `hoverStatusLines` 各走 `Date.now()` 默认参数，而聚合用一次读数——跨分钟边界时同一行的徽标文案与明细文案可能差 1 分钟，正是 `group-status.ts` 那条不变式想防的事。`ProjectRowItem` 现接收 `now`，由 `WorkspaceBrowser` 统一的读数下发到徽标与明细。
+  - `FACET_TONE_RANK` 仍是对外导出的名字但仓库内零使用（真正生效的是 `TONE_ORDER`）——**本次不动**：它是对外契约名，删除可能影响 dsh-gitea-dispatch 的产物断言，留作独立议题。
+- **docs** 设置项标签与 hint（中 / 英）、字段注释、`Config` 注释、README 两处表格里对「等待评审」图标的描述改回与屏幕一致：dsh-gitea-dispatch 自其 #56/#60 起交出自绘沙漏，不再是「列表笔」（[Issues #23](http://192.168.4.77:3000/dsh-plugins/dsh-group-status/issues/23)）。`legacy/register-legacy-facets.tsx` 的 pen 保留为**兜底形状**并注明「仅 provider 缺席时现形，形状不一致是有意接受的」——provider 缺席时让形状与行内不一致，好过「等待评审彻底不进徽标」。
+- **test** 新增 5 条用例：脉冲逐来源判定（含邻居开闪不影响 `pulse: false`）、明细取来源图标及其缺省兜底、点行与明细同序、同一 `now` 决定倒计时读数、#25② 的两处优先级分歧各一条 + 一条「无子智能体的已完成仍照常计入」的反向保护。
+
 - **fix** 入库的构建产物比源码陈旧：`lib/types/index.js`（`tsdown` 的打包入口）比 `src/index.ts` 少 6 个配置项，导致发布出去的 `lib/index.js` 里 `Config` 只有 `showCompletedInBadge` 一个字段——**设置界面因此只画得出 1 个开关**，其余 6 项（进行中 / 待审批 / 定时任务 / 等待评审 / 悬停明细 / 数字阈值）在界面上无法配置。徽标行为不受影响（客户端对这些字段有「缺失即回落默认」的兜底），受影响的是可配置性。根因是 `tsc` 的 `incremental` 缓存（`lib/tsconfig.tsbuildinfo`）陈旧后**静默跳过输出且退出码为 0**，产物便一直停在旧版本。已全量重建 `lib/`，并新增 `tests/artifacts.node.test.mjs` 锁住「产物存在性 + `Config` 字段与源码对齐」，同时把全量重建的写法补进 `docs/upgrading.md`。
 - **feat** 跨插件状态改为**协议**：本插件不再逐家适配，改由状态所有者注册 facet。新增 `src/client/facets.ts`（协议 v1 + 登记面）与 `docs/facet-protocol.md`（契约文档），client 入口导出 `registerGroupStatusFacet` / `GROUP_STATUS_FACET_PROTOCOL_VERSION`。加一个新状态源，本插件**零改动**。
 - **refactor** 聚合与渲染去掉所有按来源写死的分支：`GroupLiveStatus` 不再有 `scheduled*` / `waitingReview*` 具名字段，改持 `facets: Map<id, {facet, fold}>`；徽标的数字取各来源自报的 `count` 之和，图标取来源自带的 `renderIcon`（缺则按 `tone` 退通用点），文案取 `label`（缺则「N 需要关注」，绝不把内部 id 念给用户），脉冲取 `pulse`。
@@ -17,7 +29,7 @@
 
 - **fix** 对 dsh-gitea-dispatch 的适配只做了一半：徽标只消费它发布的 `state`，其余字段全丢。提供方按 issue #16 发布的条目是 `{ prNumber, state, startedAt?, waitMaxSec?, deadline? }`，本插件的接收类型只声明 `{ prNumber, state }`，于是「在等哪个 PR」「还要等多久」「窗口缺失」三件事到不了界面。现在悬停明细与 `aria-label` 带上 PR 号与剩余时长（分钟粒度：徽标只在提供方 store 通知时重渲染，秒级读数会停在旧值上撒谎），窗口缺失时照实说「等待评审」，不编造倒计时。实测：注入一条 `PR #990002` 的等待登记后，折叠的 `dsh-plugins` 徽标由 `1 进行中 · 1 等待评审 · 1 定时任务` 变为 `1 进行中 · 1 等待评审（剩 2分钟） · #990002 · 1 定时任务`；把等待窗口改成已过期则变为 `…（已超时）…`。
 - **fix** `waiting` 与 `overdue` 此前只有颜色不同，文案都是「等待评审」。这与本插件自己为定时任务与等待评审选用不同图标的理由（只靠颜色区分对色盲用户不可用）自相矛盾，也丢掉了提供方算出来的状态。现在两者各有一句文案：`等待评审` 与 `等待评审（已超时）`。
-- **fix** 等待评审超时不再触发徽标脉冲。数据所有者把 `overdue` 的会话行图标画成静止（其 `lib/waiting-glyph.js` 写明「超时后停动画：静止即不再期待，比继续闪动更能表达已经结束」），且其 `overdue` 只代表 CI 的等待窗口到期、不代表评审失败。同一条等待在行内静止、在父级徽标闪动，就是同一事实的两种说法。红色不变。判据抽成纯函数 `groupBadgeIsUrgent()`，定时任务的 overdue/urgent 仍脉冲。
+- **fix** 等待评审超时不再触发徽标脉冲。数据所有者把 `overdue` 的会话行图标画成静止（其 `lib/waiting-glyph.js` 写明「超时后停动画：静止即不再期待，比继续闪动更能表达已经结束」），且其 `overdue` 只代表 CI 的等待窗口到期、不代表评审失败。同一条等待在行内静止、在父级徽标闪动，就是同一事实的两种说法。红色不变。判据抽成纯函数 `groupBadgeIsUrgent()`，定时任务的 overdue/urgent 仍脉冲。（该判据已在上面的 #22 条里进一步下沉到单个元素，`groupBadgeIsUrgent` 由 `facetPulseClass` 取代。）
 - **refactor** 分组折叠交给提供方：能用到 `summarizeWaitingGroup()` 就用它（id 口径、状态排序、截止时刻算法都归它所有），缺失时才退回本仓库的等价实现 `summarizeWaitingGroupLocally()`。此前本插件自己重写了一遍查表，且比提供方少两条兜底（`session-` / `webhook-` 前缀形态），只会静默 miss；现在与 `cross-plugin-summary.ts` 的 `entryFor()` 共用同一条四形态规则。
 - **refactor** 徽标文案拆到 `src/client/badge-labels.ts`（纯函数，零运行时 import）。`rows/GroupBadge.tsx` 引入宿主图标集，其 `require` 图只在 DSH 应用内解析得到（`vitest.config.ts` 排除理由 (b)），文案留在原地等于这批跨插件状态永远测不到。新增 `tests/badge-labels.client.spec.ts` 11 例锁住文案与脉冲判据。
 - **feat** 等待评审的事实随多层聚合正确上卷：PR 号取并集、去重、升序，倒计时取组内最早的未到期截止（一侧无窗口不会抹掉另一侧的）。多个会话等同一个 PR 时，明细只写一次 `#15`。

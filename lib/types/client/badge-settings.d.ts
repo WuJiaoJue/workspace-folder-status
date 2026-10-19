@@ -41,7 +41,7 @@ export interface ResolvedBadgeSettings {
     showPendingInBadge: boolean;
     /** 折叠徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）；缺失/非法一律回落 true。 */
     showScheduledInBadge: boolean;
-    /** 折叠徽标是否显示「等待评审」列表笔图标（数据来自 dsh-gitea-dispatch）；缺失/非法一律回落 true。 */
+    /** 折叠徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch，自其 #56 起画沙漏；缺失/非法一律回落 true）。 */
     showWaitingReviewInBadge: boolean;
     /** 悬停卡里是否显示聚合明细行；缺失/非法一律回落 true。 */
     showHoverDetails: boolean;

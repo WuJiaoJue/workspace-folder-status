@@ -19,10 +19,10 @@ import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode } from '../tree.ts'
 import type { ResolvedBadgeSettings } from '../badge-settings.ts'
-import { facetCountTotal, facetGlyph, groupBadgeIsUrgent, groupLiveLabel } from '../badge-labels.ts'
+import { facetCountTotal, facetGlyph, facetPulseClass, groupLiveLabel } from '../badge-labels.ts'
 import css from './Rows.module.css'
 
-export { facetCountTotal, facetGlyph, groupBadgeIsUrgent, groupLiveLabel, hoverStatusLines } from '../badge-labels.ts'
+export { facetCountTotal, facetGlyph, facetPulseClass, groupLiveLabel, hoverStatusLines } from '../badge-labels.ts'
 
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t']
@@ -63,25 +63,36 @@ export function groupLiveBadge(
   const dots: ReactNode[] = []
   if (pending > 0) dots.push(<StateDot key="warn" state="warning" />)
   if (active > 0) dots.push(<StateDot key="run" state="ongoing" />)
-  if (completed > 0) dots.push(<StateDot key="done" state="done" />)
-  // 外部来源排在宿主状态点之后，顺序由 facet.order 决定（谁更该被看见，来源自己排）。
+  // #25①:点行顺序此前是 pending → active → **done** → facet，而明细（`hoverStatusLines`）
+  // 是 pending → active → **facet** → done，两处相反；而 `badge-labels.ts` 的注释声称两者
+  // 「完全一致」，括号里写的还正是明细那一种。此处按明细对齐（facet 排在 done 之前），
+  // 注释与实现从此同一条来源。
+  // 外部来源的相对次序由 facet.order 决定（谁更该被看见，来源自己排）。
+  // CSS module 的类型把 class 声明为可能 undefined，这里只在真的闪时才求值。
+  const urgentClass = css.groupBadgeUrgent ?? ''
   for (const entry of s.facets.values()) {
     const glyph = facetGlyph(entry, t, now)
+    const pulseClass = facetPulseClass(entry, urgentClass) || undefined
     dots.push(glyph === undefined
       // provider 没画图标时退回通用点：陌生来源仍然可见，只是朴素。宿主只有三档状态点，
       // 没有 error 档，所以 info 之外的色档都落到 warning 点上。
       ? <StateDot key={entry.facet.id} state={entry.fold.tone === 'info' ? 'ongoing' : 'warning'} />
-      : <span key={entry.facet.id}>{glyph}</span>)
+      // #22:脉冲 class 加在**这一枚元素**上，不是整只徽标。同组里别家开闪不该让
+      // `pulse: false` 的来源跟着呼吸——那条约定不能依赖邻居的开关。
+      : <span key={entry.facet.id} className={pulseClass}>{glyph}</span>)
   }
+  if (completed > 0) dots.push(<StateDot key="done" state="done" />)
   // 数字 = 待审批 + 进行中（含子智能体）+ 已完成 + 各外部来源自己报的条数。
+  // #25②:「含子智能体」此前是**空头承诺**——`summarizeGroupStatus` 在 pending 分支里
+  //  `continue` 掉了 `subagents += n.runningSubagentCount`，行内却给两个点。计数判据已
+  //  改成与 `Rows.tsx` 的 `sessionStatuses()` 同一套规则，这条注释现在才成立。
   // P2-3: 上限 99+，避免大项目组徽标过宽。
   // P3-3: 低于 countThreshold 时省略数字（点已表达"有东西"）；设置项可调。
   const count = pending + active + completed + facetTotal
   const countLabel = count > 99 ? '99+' : count >= settings.countThreshold ? String(count) : ''
-  // P2-2: 脉冲判据见 badge-labels.ts 的 groupBadgeIsUrgent（由各 facet 自己声明）。
-  const badgeClass = groupBadgeIsUrgent(s) ? `${css.groupBadge} ${css.groupBadgeUrgent}` : css.groupBadge
+  // #22:徽标**容器**不再带脉冲 class——脉冲是"某个来源的元素该闪"，不是整只徽标该闪。
   return (
-    <span className={badgeClass} role="img" aria-label={label} title={label}>
+    <span className={css.groupBadge} role="img" aria-label={label} title={label}>
       {dots}
       {countLabel && <span className={css.groupBadgeCount}>{countLabel}</span>}
     </span>

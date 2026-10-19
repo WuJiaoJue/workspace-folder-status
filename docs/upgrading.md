@@ -26,7 +26,7 @@
 | # | 文件 / 符号 | 改了什么 |
 |---|---|---|
 | 1 | `src/client/tree.ts` — `GroupNode.liveStatus`（**可选字段**）+ `GroupLiveStatus` 类型 re-export | 只留类型面：`liveStatus?` 供渲染层读取，`GroupLiveStatus` 从 `group-status.ts` 转出给 `Rows.tsx` 用。**计算不在此文件**（见 #21、#22） |
-| 2 | `src/client/rows/GroupBadge.tsx`（画）+ `src/client/badge-labels.ts`（说） | **本仓库新增文件**（上游没有）：前者在折叠且有活时画徽标（点 + 图标 + 数字，`role="img"` + `aria-label`），后者是纯函数文案面（`groupLiveLabel` / `hoverStatusLines` / `waitingReviewLabel` / `groupBadgeIsUrgent`）。文案拆开的唯一理由：GroupBadge 引入宿主图标集，其 `require` 图只在 DSH 应用内解析（见 `vitest.config.ts` 排除理由 (b)），留在原地等于跨插件状态永远测不到。`Rows.tsx` 只剩 import 与两个调用点 |
+| 2 | `src/client/rows/GroupBadge.tsx`（画）+ `src/client/badge-labels.ts`（说） | **本仓库新增文件**（上游没有）：前者在折叠且有活时画徽标（点 + 图标 + 数字，`role="img"` + `aria-label`），后者是纯函数文案面（`groupLiveLabel` / `hoverStatusLines` / `waitingReviewLabel` / `facetPulseClass`）。文案拆开的唯一理由：GroupBadge 引入宿主图标集，其 `require` 图只在 DSH 应用内解析（见 `vitest.config.ts` 排除理由 (b)），留在原地等于跨插件状态永远测不到。`Rows.tsx` 只剩 import 与两个调用点 |
 | 3 | `src/client/rows/Rows.tsx` — `WorkspaceHoverContent` 的 `status` prop | 折叠时在 hover 卡里追加聚合明细行 |
 | 4 | `src/client/rows/Rows.module.css` — `.groupBadge*` / `.groupLive*` | 徽标与数字的样式 |
 | 5 | `src/client/rows/WorkspaceBrowser.tsx` — `require('dsh-later/client')` / `require('dsh-gitea-dispatch/client')` | 可选消费跨插件摘要 hook，容忍未安装（`try/catch` 后保持 `undefined`）。gitea-dispatch 那份还一并取它的分组聚合 `summarizeWaitingGroup()`：取到就委托它折叠组内等待，取不到（旧版提供方）才用 `group-status.ts` 的等价实现 |

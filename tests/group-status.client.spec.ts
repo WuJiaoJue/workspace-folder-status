@@ -182,6 +182,48 @@ describe('folded group live status', () => {
     expect(groupOf(state, statuses).liveStatus).toEqual({ ...EMPTY, running: 2, subagents: 2 })
   })
 
+  // #25②:徽标计数此前与 `rows/Rows.tsx` 的 `sessionStatuses()` 各写一份优先级，两处结果不同。
+  // 这两条锁住"以行内为准"的选择——行内是用户真正看到的那个答案。
+  it('#25②:会话在等审批时，它跑着的子智能体照样计入（行内给两个点）', () => {
+    const state = list(
+      [summary('parent', 30), summary('child', 20)],
+      children('parent', ['child']),
+    )
+    const statuses: SessionStatusSnapshot = new Map([
+      // 父：等审批。子：running → 算子智能体。
+      [sid('parent'), status(pending('approval', 'parent'), { running: false })],
+      [sid('child'), status(undefined, { running: true })],
+    ])
+    const live = groupOf(state, statuses).liveStatus
+    // 子会话本身也是组成员，所以它另算一个 running；父在等审批 → approval，
+    // 而父那个 running 的子智能体**也**计入 subagents（此前被 `continue` 漏掉了）。
+    expect(live).toEqual({ ...EMPTY, approval: 1, running: 1, subagents: 1 })
+  })
+
+  it('#25②:未运行但已完成 + 有运行中子智能体时，不额外计一次已完成（行内 return [subagents]）', () => {
+    const state = list(
+      [summary('parent', 30), summary('child', 20)],
+      children('parent', ['child']),
+    )
+    const statuses: SessionStatusSnapshot = new Map([
+      // completionUnread = 行内判 completed 的依据；父不 running、已完成、且有子智能体在跑。
+      [sid('parent'), status(undefined, { running: false, completionUnread: true })],
+      [sid('child'), status(undefined, { running: true })],
+    ])
+    const live = groupOf(state, statuses).liveStatus
+    // 子会话本身是成员，也算 running；父只贡献 subagents，不贡献 done。
+    expect(live).toEqual({ ...EMPTY, running: 1, subagents: 1 })
+    expect(live.done).toBe(0)
+  })
+
+  it('#25②:既无 pending 也无子智能体的已完成成员仍照常计入', () => {
+    const state = list([summary('done', 30)])
+    const statuses: SessionStatusSnapshot = new Map([
+      [sid('done'), status(undefined, { running: false, completionUnread: true })],
+    ])
+    expect(groupOf(state, statuses).liveStatus).toEqual({ ...EMPTY, done: 1 })
+  })
+
   it('skips blank, archived and stale members', () => {
     const state = list([
       summary('blank', 40, { blank: true }),

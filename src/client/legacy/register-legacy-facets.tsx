@@ -60,7 +60,12 @@ export function registerLegacyFacets(sources: LegacyFacetSources, target: FacetR
   if (sources.waiting !== undefined) {
     const facet: GroupStatusFacet<WaitingReviewSummaryMap | undefined, WaitingReviewData> = {
       ...createWaitingReviewFacet(sources.waiting),
-      // 与定时任务**用不同图标**：两者同属"在等"的语义，只靠颜色区分对色盲用户不可用。
+      // #23:这枚「列表笔」是**过时刻意保留的兜底形状，不是当前形状**。dsh-gitea-dispatch
+      // 自其 #56/#60 起交出自绘的沙漏（跟随 waitingIconStyle 四档），本文件按
+      // FACET_ORIGIN_RANK 让位给它（provider 恒胜 legacy）。只有 provider 缺席
+      //（未安装 / 版本早于 #47）或登记失败时才会现形——那些路径下形状与行内不一致是
+      // **有意接受的**，好过「等待评审彻底不进徽标」。别把它当成 bug 改回沙漏。
+      // 与定时任务仍用不同图标：两者同属"在等"的语义，只靠颜色区分对色盲用户不可用。
       renderIcon: (fold) => glyph(
         fold.tone === 'error' ? TONE_COLOR.error : TONE_COLOR.warn,
         createElement(IconListPenOutlineRegular, { size: 14 }),
