@@ -39,7 +39,7 @@ interface WorkspaceRowDragProps {
  * @param props.t - the browser root's locale seat.
  * @returns the row element.
  */
-export declare function ProjectRowItem({ group, containsCurrentDescendant, onToggle, onCreate, actions, drag, home, newShortcut, settings, t }: {
+export declare function ProjectRowItem({ group, containsCurrentDescendant, onToggle, onCreate, actions, drag, home, newShortcut, settings, now, t }: {
     group: GroupNode;
     newShortcut?: ShortcutCatalogEntry | undefined;
     containsCurrentDescendant?: boolean;
@@ -56,6 +56,10 @@ export declare function ProjectRowItem({ group, containsCurrentDescendant, onTog
     home?: string | undefined;
     /** 徽标设置：各来源显隐、悬停明细、数字样式。 */
     settings: import('../badge-settings.ts').ResolvedBadgeSettings;
+    /** #25④:一次渲染一个时钟读数。徽标文案、aria-label 与悬停明细共用它，否则跨分钟
+     *  边界时同一行的徽标与明细会给出相差一分钟的两个答案。缺省仅供直接构造该组件的
+     *  测试使用，生产路径由 WorkspaceBrowser 统一传入。 */
+    now?: number | undefined;
     t: RowTranslate;
 }): import("react").JSX.Element;
 /**

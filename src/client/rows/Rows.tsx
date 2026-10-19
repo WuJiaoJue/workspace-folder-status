@@ -161,7 +161,7 @@ function createdLabel(createdAt: number, t: RowTranslate): string {
 // groupLiveBadge and groupLiveLabel are fork-owned — imported from ./GroupBadge.tsx.
 
 /** Hover-card body: workspace title, display directory path, absolute creation time. */
-function WorkspaceHoverContent({ label, cwd, createdAt, status, settings, t }: {
+function WorkspaceHoverContent({ label, cwd, createdAt, status, settings, now, t }: {
   label: string
   cwd: string | undefined
   createdAt: number
@@ -169,10 +169,12 @@ function WorkspaceHoverContent({ label, cwd, createdAt, status, settings, t }: {
   status: GroupLiveStatus | undefined
   /** 徽标设置：悬停明细按来源过滤；`showHoverDetails=false` 时整段为空。 */
   settings: import('../badge-settings.ts').ResolvedBadgeSettings
+  /** #25④:与徽标同一个时钟读数。 */
+  now: number
   t: RowTranslate
 }) {
   // Fork-owned: status detail lines computed by GroupBadge.tsx.
-  const lines = hoverStatusLines(status, t, settings)
+  const lines = hoverStatusLines(status, t, settings, now)
   return (
     <div className={css.hoverContent}>
       <div className={css.hoverTitle}>{label}</div>
@@ -180,7 +182,9 @@ function WorkspaceHoverContent({ label, cwd, createdAt, status, settings, t }: {
       <div className={css.hoverTime}>{createdLabel(createdAt, t)}</div>
       {lines.map(line => (
         <div className={css.hoverStatus} key={line.text}>
-          <StateDot state={line.state} />
+          {/* #24:外部来源用它自己交的图标（已含色档），与徽标同源；宿主会话状态没有
+              glyph，仍走三档 StateDot。 */}
+          {line.glyph ?? <StateDot state={line.state} />}
           <span>{line.text}</span>
         </div>
       ))}
@@ -231,7 +235,7 @@ function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' |
  * @param props.t - the browser root's locale seat.
  * @returns the row element.
  */
-export function ProjectRowItem({ group, containsCurrentDescendant = false, onToggle, onCreate, actions, drag, home, newShortcut, settings, t }: {
+export function ProjectRowItem({ group, containsCurrentDescendant = false, onToggle, onCreate, actions, drag, home, newShortcut, settings, now, t }: {
   group: GroupNode
   newShortcut?: ShortcutCatalogEntry | undefined
   containsCurrentDescendant?: boolean
@@ -245,6 +249,10 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
   home?: string | undefined
   /** 徽标设置：各来源显隐、悬停明细、数字样式。 */
   settings: import('../badge-settings.ts').ResolvedBadgeSettings
+  /** #25④:一次渲染一个时钟读数。徽标文案、aria-label 与悬停明细共用它，否则跨分钟
+   *  边界时同一行的徽标与明细会给出相差一分钟的两个答案。缺省仅供直接构造该组件的
+   *  测试使用，生产路径由 WorkspaceBrowser 统一传入。 */
+  now?: number | undefined
   t: RowTranslate
 }) {
   const row = group
@@ -282,7 +290,7 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
       <span className={css.projectText}>
         <span className={css.title}>{label}</span>
       </span>
-      {groupLiveBadge(group, t, settings)}
+      {groupLiveBadge(group, t, settings, now)}
       <span className={css.rowActions}>
         {actions !== undefined && (
           <Menu
@@ -337,6 +345,7 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
         createdAt={row.createdAt}
         status={row.expanded ? undefined : row.liveStatus}
         settings={settings}
+        now={now ?? Date.now()}
         t={t}
       />}
       openDelayMs={800}

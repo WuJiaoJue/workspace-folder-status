@@ -572,6 +572,7 @@ function SessionTree({
           containsCurrentDescendant={currentAncestors.has(group.key)}
           home={home}
           settings={badgeSettings}
+          now={now}
           t={t}
           onToggle={() => {
             if (group.expanded) {

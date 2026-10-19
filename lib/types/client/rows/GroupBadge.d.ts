@@ -18,7 +18,7 @@ import type { ReactNode } from 'react';
 import type { WorkspaceBrowserProps } from '../contract/slots.ts';
 import type { GroupNode } from '../tree.ts';
 import type { ResolvedBadgeSettings } from '../badge-settings.ts';
-export { facetCountTotal, facetGlyph, groupBadgeIsUrgent, groupLiveLabel, hoverStatusLines } from '../badge-labels.ts';
+export { facetCountTotal, facetGlyph, facetPulseClass, groupLiveLabel, hoverStatusLines } from '../badge-labels.ts';
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t'];
 /**

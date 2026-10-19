@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import {
-  facetCountTotal, facetLines, groupBadgeIsUrgent, groupLiveLabel, hoverStatusLines,
+  facetCountTotal, facetLines, facetPulseClass, groupLiveLabel, hoverStatusLines,
 } from '../src/client/badge-labels.ts'
 import { EMPTY_LIVE_STATUS, type FacetEntry, type GroupLiveStatus } from '../src/client/group-status.ts'
 import { GROUP_STATUS_FACET_PROTOCOL_VERSION, type AnyFacet, type AnyFacetFold } from '../src/client/facets.ts'
@@ -95,10 +95,63 @@ describe('陌生来源不写任何分支也能被读出来', () => {
       .toEqual(['1 等待审批', '1 陌生', '1 已完成'])
   })
 
-  it('脉冲由来源声明，不由徽标反推', () => {
-    expect(groupBadgeIsUrgent(status({ facets: table(facet('x.a', { count: 1, tone: 'error', pulse: true })) }))).toBe(true)
-    expect(groupBadgeIsUrgent(status({ facets: table(facet('x.a', { count: 1, tone: 'error', pulse: false })) }))).toBe(false)
-    expect(groupBadgeIsUrgent(status())).toBe(false)
+  it('#22:脉冲逐来源判定，别家开闪不让 `pulse:false` 的来源跟着闪', () => {
+    const urgent = 'IS-URGENT'
+    const blinking = facet('x.a', { count: 1, tone: 'error', pulse: true })
+    const still = facet('x.b', { count: 1, tone: 'warn', pulse: false })
+    // 同一个 status 里两者并存 —— 这正是过去整只徽标一起呼吸的场景。
+    const s = status({ facets: table(blinking, still) })
+    expect(facetPulseClass(blinking, urgent)).toBe(urgent)
+    // 判据只读**这一个** entry 的 fold：邻居开不开闪与它无关。
+    expect(facetPulseClass(still, urgent)).toBeUndefined()
+  })
+
+  it('#22:provider 没交 pulse 时按缺省不闪', () => {
+    const entry = facet('x.a', { count: 1, tone: 'error' } as AnyFacetFold)
+    expect(facetPulseClass(entry, 'IS-URGENT')).toBeUndefined()
+  })
+
+  it('#24:明细行带来源自己的图标，且与徽标同源同一个元素', () => {
+    const glyph = { type: 'span', props: { 'data-glyph': 'hourglass' } }
+    const entry = facet('x.a', { count: 1, tone: 'error', pulse: false }, {
+      label: fold => `${fold.count} 等待评审（已超时）`,
+      renderIcon: () => glyph,
+    })
+    const lines = hoverStatusLines(status({ facets: table(entry) }), t, ALL_ON, NOW)
+    expect(lines).toHaveLength(1)
+    // 色档只能由来源自己的图标表达（宿主点只有三档，没有 error 档），所以必须真拿到它。
+    expect(lines[0].glyph).toBe(glyph)
+    expect(lines[0].text).toBe('1 等待评审（已超时）')
+  })
+
+  it('#24:provider 没交 renderIcon 时退回三档点，不留空洞', () => {
+    const entry = facet('x.a', { count: 1, tone: 'error', pulse: false }, { label: fold => `${fold.count} 陌生` })
+    const lines = hoverStatusLines(status({ facets: table(entry) }), t, ALL_ON, NOW)
+    expect(lines[0].glyph).toBeUndefined()
+    expect(lines[0].state).toBe('warning')
+  })
+
+  it('#25①:明细顺序 = 徽标点行顺序（facet 排在已完成之前）', () => {
+    const s = status({
+      approval: 1, done: 1,
+      facets: table(facet('x.a', { count: 1, tone: 'warn', pulse: false }, { label: fold => `${fold.count} 陌生` })),
+    })
+    // 明细
+    expect(hoverStatusLines(s, t, ALL_ON, NOW).map(line => line.text))
+      .toEqual(['1 等待审批', '1 陌生', '1 已完成'])
+    // label 与明细同序
+    expect(groupLiveLabel(s, t, ALL_ON, NOW)).toBe('1 等待审批 · 1 陌生 · 1 已完成')
+  })
+
+  it('#25④:同一个 `now` 决定倒计时读数——徽标与明细不会差一分钟', () => {
+    // label 真的读 ctx.now：这是「倒计时会不会跨分钟说两套话」的可观测点。
+    const entry = facet('x.a', { count: 1, tone: 'warn', pulse: false }, {
+      label: (fold, ctx) => `${fold.count} 剩 ${Math.floor((1_000_000 - ctx.now) / 60_000)} 分钟`,
+    })
+    const s = status({ facets: table(entry) })
+    // 显式传 `now` 时读数由它决定，不读挂钟：两次调用结果可预测地不同。
+    expect(hoverStatusLines(s, t, ALL_ON, NOW).map(line => line.text)).toEqual(['1 剩 0 分钟'])
+    expect(hoverStatusLines(s, t, ALL_ON, NOW - 600_000).map(line => line.text)).toEqual(['1 剩 10 分钟'])
   })
 })
 

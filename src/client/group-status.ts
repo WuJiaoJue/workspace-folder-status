@@ -138,14 +138,22 @@ export function summarizeGroupStatus(
   let question = 0
   let done = 0
   let subagents = 0
+  // #25②：这一段曾与 `rows/Rows.tsx` 的 `sessionStatuses()` 各写一份优先级，两处结果不同
+  // （pending 会话漏算子智能体；未运行但已完成 + 有运行中子智能体时两处判断相反）。计数
+  // 判据仍在本模块（徽标只需要五个数字），但**语义以行内为准**：行内 pending 会同时给出
+  // subagents，未运行且有 subagents 时不承认 completed。下面的分支刻意照抄那两条规则，
+  // 不是另立一套「徽标自己的优先级」。
   for (const n of nodes) {
     if (n.blank || n.archived) continue
-    if (n.pendingInteraction === 'approval') { approval += 1; continue }
-    if (n.pendingInteraction === 'plan-review') { planReview += 1; continue }
-    if (n.pendingInteraction === 'question') { question += 1; continue }
-    if (n.running) running += 1
-    else if (n.completed) done += 1
-    subagents += n.runningSubagentCount
+    const hasSubagents = n.runningSubagentCount > 0
+    // 行内：pending 与 subagents 可并存（Rows.tsx `[pending, subagents]`），故不 `continue`。
+    if (n.pendingInteraction === 'approval') { approval += 1; subagents += n.runningSubagentCount; continue }
+    if (n.pendingInteraction === 'plan-review') { planReview += 1; subagents += n.runningSubagentCount; continue }
+    if (n.pendingInteraction === 'question') { question += 1; subagents += n.runningSubagentCount; continue }
+    if (n.running) { running += 1; subagents += n.runningSubagentCount; continue }
+    // 行内：subagents 优先于 completed（`if (subagents !== undefined) return [subagents]`）。
+    if (hasSubagents) { subagents += n.runningSubagentCount; continue }
+    if (n.completed) done += 1
   }
 
   // 外部来源逐个折。一个来源坏了不该带塌整只徽标：快照读失败按「此刻没有数据」处理，

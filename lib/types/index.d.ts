@@ -38,7 +38,7 @@ export declare const Config: Schema<NoInfer<Schemastery.ObjectS<NoInfer<{
     showPendingInBadge: Schema<boolean, boolean, "defined">;
     /** 折叠分组徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）。 */
     showScheduledInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「等待评审」列表笔图标（数据来自 dsh-gitea-dispatch）。 */
+    /** 折叠分组徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch）。 */
     showWaitingReviewInBadge: Schema<boolean, boolean, "defined">;
     /** 悬停卡里是否显示聚合明细行（"1 等待回答 · 1 进行中…"）。 */
     showHoverDetails: Schema<boolean, boolean, "defined">;
@@ -58,7 +58,7 @@ export declare const Config: Schema<NoInfer<Schemastery.ObjectS<NoInfer<{
     showPendingInBadge: Schema<boolean, boolean, "defined">;
     /** 折叠分组徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）。 */
     showScheduledInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「等待评审」列表笔图标（数据来自 dsh-gitea-dispatch）。 */
+    /** 折叠分组徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch）。 */
     showWaitingReviewInBadge: Schema<boolean, boolean, "defined">;
     /** 悬停卡里是否显示聚合明细行（"1 等待回答 · 1 进行中…"）。 */
     showHoverDetails: Schema<boolean, boolean, "defined">;

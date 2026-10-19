@@ -92,13 +92,17 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 {
   count: number                            // 进徽标数字的条数；<= 0 时该来源整块跳过
   tone: 'info' | 'warn' | 'error'          // 语义色档（本插件据此取色令牌）
-  pulse: boolean                           // 要不要脉冲
+  pulse: boolean                           // 你这一条要不要脉冲（#22：作用在你自己的图标上）
   data?: unknown                           // 你的私有形状，本插件从不读
 }
 ```
 
 `count` 是你对徽标数字的贡献。你的 `label` 应当与它口径一致（徽标显示 2，明细写 3，
 用户会认为界面在撒谎）。
+
+**`pulse` 只作用于你交出的那一枚图标**（#22），不作用于整只徽标：同组里别家声明 `pulse:
+true` 不会让你的图标跟着呼吸，你声明 `pulse: false` 也不会因为邻居开闪而失效。计数数字与
+宿主会话状态点**任何时候都不闪**——它们不是你的状态，就不该继承你的紧急程度。
 
 ### 缺省 `merge` 与它不做什么
 
@@ -153,7 +157,9 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 
 - **新 facet 默认没有用户开关**。`settingKey` 只能挂到本插件已有的布尔开关上；要为一
   个新状态加独立开关，需在本插件的 `Config` schema 里加字段（一处声明，不改逻辑）。
-- **明细行只有 warning / ongoing / done 三档点**。`tone: 'error'` 在悬停明细里也画
-  warning 点，紧急程度由文案与图标色表达。
+- **宿主会话状态在明细里只有 warning / ongoing / done 三档点**（这三档是宿主的语义，本
+  插件无权增减）。**外部来源不适用这条限制**：`renderIcon` 交出的图标在徽标与悬停明细两
+  处都会渲染，所以 `tone: 'error'` 由你自己的图标色档表达，不靠文案自救（#24）。没交
+  `renderIcon` 的来源在明细里退回 warning 点。
 - **倒计时精度到分钟**。徽标只在你的 store 通知时重渲染，秒级读数会停在旧值上撒谎。
   要秒级就需要本插件为文案装一个定时器，那会破掉"零额外轮询、零额外计时器"的形态。
