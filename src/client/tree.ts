@@ -445,8 +445,6 @@ function sessionNode(
  * @param rowState - registry-global pin and archive sets plus the archived filter.
  * @param statuses - unified UI status by Session.
  * @param view - local expansion arrays.
- * @param waitingReviewSummary - dsh-gitea-dispatch waiting map (session id → waiting entry).
- * @param scheduleSummary - dsh-later schedule map (session id → schedule entry).
  * @returns group sections in render order.
  */
 export function deriveGroups(
