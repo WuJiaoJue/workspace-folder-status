@@ -11,6 +11,7 @@ import { test } from 'node:test'
 
 const {
   GROUP_STATUS_FACET_PROTOCOL_VERSION,
+  FACET_TONE_RANK,
   createFacetRegistry,
   defaultMergeFold,
   facetOrigin,
@@ -156,4 +157,45 @@ test('缺省合并：数量相加、色档取更紧急、脉冲取或，且从�
     { count: 1, tone: 'info', pulse: false, data: { any: 1 } },
     { count: 1, tone: 'info', pulse: false, data: { any: 2 } },
   ), false, '缺省合并器不该编造一个它看不懂的 data 合并结果')
+})
+
+// #25③：色档优先级此前有两条实现（对外的 `FACET_TONE_RANK` 零使用 + 私有的
+// `TONE_ORDER` 真正生效）。现已统一到前者。下面两条是这次的回归护栏。
+test('#25③：合并用的就是对外导出的那张表，不再另持一份', () => {
+  // 断言**由表本身推出**，不写死 info<warn<error：有人改了 FACET_TONE_RANK，这条会跟着
+  // 动；而若有人重新引入第二份表，两边就会在这里对不上。
+  const tones = Object.keys(FACET_TONE_RANK)
+  assert.ok(tones.length > 1, '表里得有可比较的档位')
+  for (const a of tones) {
+    for (const b of tones) {
+      const want = FACET_TONE_RANK[b] > FACET_TONE_RANK[a] ? b : a
+      assert.equal(
+        defaultMergeFold({ count: 1, tone: a, pulse: false }, { count: 1, tone: b, pulse: false }).tone,
+        want,
+        `${a} + ${b} 应取 ${want}（按 FACET_TONE_RANK）`,
+      )
+    }
+  }
+})
+
+test('#25③：坏 provider 交出非法色档时，合法那一档仍必胜，非法值不被传播', () => {
+  // `facetRejection` 不校验 fold() 返回的 tone（那是跨插件边界，运行时才产出），所以
+  // 非法档位真能到达 defaultMergeFold。旧实现靠 indexOf 返回 -1 得到这个性质；统一到
+  // FACET_TONE_RANK 后由 `?? -1` 保住。删掉那个 `?? -1`，第一条断言会红。
+  const BOGUS = 'not-a-tone'
+  assert.equal(
+    defaultMergeFold({ count: 1, tone: BOGUS, pulse: false }, { count: 1, tone: 'error', pulse: false }).tone,
+    'error',
+    '左侧非法时，右侧合法档必须胜',
+  )
+  assert.equal(
+    defaultMergeFold({ count: 1, tone: 'error', pulse: false }, { count: 1, tone: BOGUS, pulse: false }).tone,
+    'error',
+    '右侧非法时，左侧合法档必须胜',
+  )
+  // 两边都非法：与统一前一致，保留左侧，不把 undefined 之类造出来。
+  assert.equal(
+    defaultMergeFold({ count: 1, tone: BOGUS, pulse: false }, { count: 1, tone: 'other-bogus', pulse: false }).tone,
+    BOGUS,
+  )
 })
