@@ -34,6 +34,9 @@
 - **refactor** 分组折叠交给提供方：能用到 `summarizeWaitingGroup()` 就用它（id 口径、状态排序、截止时刻算法都归它所有），缺失时才退回本仓库的等价实现 `summarizeWaitingGroupLocally()`。此前本插件自己重写了一遍查表，且比提供方少两条兜底（`session-` / `webhook-` 前缀形态），只会静默 miss；现在与 `cross-plugin-summary.ts` 的 `entryFor()` 共用同一条四形态规则。
 - **refactor** 徽标文案拆到 `src/client/badge-labels.ts`（纯函数，零运行时 import）。`rows/GroupBadge.tsx` 引入宿主图标集，其 `require` 图只在 DSH 应用内解析得到（`vitest.config.ts` 排除理由 (b)），文案留在原地等于这批跨插件状态永远测不到。新增 `tests/badge-labels.client.spec.ts` 11 例锁住文案与脉冲判据。
 - **feat** 等待评审的事实随多层聚合正确上卷：PR 号取并集、去重、升序，倒计时取组内最早的未到期截止（一侧无窗口不会抹掉另一侧的）。多个会话等同一个 PR 时，明细只写一次 `#15`。
+
+## 0.2.2 — 2026-10-15
+
 - **feat** 多层聚合：父分组折叠时，徽标聚合所有后代分组的会话状态，不再只看直接成员。嵌套的 workspace 目录结构现在能正确反映整棵子树的活动。
 - **fix** 上面这条「多层聚合」交付时是坏的：折叠的父文件夹会**漏算处于展开状态的中间层文件夹**的会话。`directStatusesForGroups` 沿用了「展开即 `EMPTY_LIVE_STATUS`」的占位写法，而聚合器把这个值当输入消费，于是展开的中间层对祖先贡献 0。现在展开的分组同样被测量，「不画徽标」退回渲染层决定。实测：dsh-group-status 展开且 1 个运行中、dsh-gitea-dispatch 1、dsh-later 3 时，dsh-plugins 的折叠徽标由 `4` 修正为 `5`。
 - **fix** 折叠文件夹时完全没有淡出动画。`AnimatedRows` 的 `resetKey` 混入了 `sessionLimits`，而上游在折叠时会把该组的 limit 重置回默认值 → `resetKey` 变化 → 动画被整个跳过。属上游行为（vendor 基线 `d70ad82`），非本仓库引入。副作用：「展开其余 N 个会话」现在也会淡入而非瞬时呈现。
@@ -46,6 +49,17 @@
 - **feat** 数字显示阈值（`countThreshold`）：取代原来的布尔开关 `alwaysShowCount`。现在可以设置一个数字阈值，只有当聚合数量 >= 该阈值时才在徽标上显示数字。默认 2（即 count=1 时省略，因为状态点已表达"有东西"）；设为 1 则始终显示；设为 3 则 count=1 和 count=2 时都不显示。
 - **fix** 设置项 `showCompletedInBadge` 在 GUI 里根本没有入口：宿主只把 `Config` 投影成客户端表单，插件页要插件自己往 `plugins.bundle.config` 注册卡片才画得出来。现在侧栏 **插件** → dsh-group-status 的 bundle 详情页有这张卡片，保存后写进 profile patch 并即时生效。外观与交互不自造——用官方 `SettingsForm` / `SettingsFormModel` / `Switch`，与「插件 → 官方 → 子智能体」同一套框架与取值。README 此前描述的路径是文档超前于实现，文案与升级手册已同步。
 - **test** 新增字段规格（真实现）与卡片接线（官方组件契约等价桩）用例。
+
+## 0.2.1 — 2026-10-15
+
+与 0.2.2 同一分钟内发布（npm `08:02:01Z` / `08:02:48Z`），**仓库里没有对应提交，也没有 tag**：
+`git log -S'"version": "0.2.1"' -- package.json` 零命中。两个版本的 tarball 也不同（unpacked 1390616 vs
+1244786 字节），所以 0.2.1 的确切内容无法从仓库重建 —— 此处只如实记录这个缺口，不据猜测填写条目。
+
+## 0.2.0 — 2026-10-12
+
+首个正式发布。内容与下面的 `0.2.0-rc.2-fork1` 相同（unpacked 1269018 vs 1269025 字节，差值即版本号本身；
+`files` 字段一致），特性清单见该小节。
 
 ## 0.2.0-rc.2-fork1
 
