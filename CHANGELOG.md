@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.4.0 — 2026-10-20
+
 - **upgrade** 依赖基线从 DSH `0.2.0-rc.2` 升到 `0.2.1-rc.2`：Cordis peer 改为 `~4.0.5`，Schemastery 与全部 `@deepseek-ai/dsh-*` 开发依赖升到对应版本；客户端 `dsh.client.inject` 加入 `@deepseek-ai/dsh-api-remote-access`。`tsc`、`tsdown`、27 个 Node 用例与 165 个 Vitest 用例全绿。
 - **feat** 同步上游 `dsh-client-ui-workspace 0.2.1-rc.2` 的会话行「复制 Session ID」菜单项（`order: 450`）和成功 / 失败全局提示；复制不打开会话、不 retain reference、不加载历史。
 - **feat** 同步上游 Workspace 权限面：注册并对外提供 keyed hook `useWorkspaceAccess(workspaceId, action)`，注入 `remoteAccess` 服务；fork 菜单项改由 `useSessionAccess(sessionId, 'session/fork')` 决定是否出现。
