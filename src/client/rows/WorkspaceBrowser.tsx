@@ -17,11 +17,11 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
+  Button, HoverCardGroup, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
   IconFlatListOutlineRegular, IconFolderCloseRegular, IconProjectAddOutlineRegular,
   IconQueueOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular,
-  IconWorkspaceTreeOutlineRegular, Menu, Modal, Toast, Tooltip,
+  IconWorkspaceTreeOutlineRegular, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionListState, SessionSearchResultItem,
@@ -40,6 +40,9 @@ import {
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
 import { directStatusesForGroups, withAggregatedStatus, type StatusedGroupNode } from '../group-status.ts'
+import {
+  raiseWatermarks, requiredWatermark, SESSION_WATERMARK_BASE, watermarkRows,
+} from '../session-watermarks.ts'
 import { facetStore } from '../facet-store.ts'
 import { visibleFacets } from '../facet-visibility.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
@@ -65,24 +68,6 @@ const EXPAND_SLIDE_MS = 300
 const SEARCH_DEBOUNCE_MS = 250
 /** `session.search` wire bound, measured in JavaScript UTF-16 code units. */
 const SEARCH_QUERY_MAX_CODE_UNITS = 500
-/** Idle Session rows visible per Workspace before the local overflow control. */
-const COLLAPSED_SESSION_LIMIT = 5
-
-/** Keep provisional and running rows outside the idle-session quota, including parents with running children. */
-function collapsedSessionRows(sessions: readonly SessionNode[], limit = COLLAPSED_SESSION_LIMIT): {
-  rows: readonly SessionNode[]
-  hiddenCount: number
-} {
-  let idleCount = 0
-  const rows = sessions.filter((session) => {
-    if (session.blank || session.running || session.runningSubagentCount > 0) return true
-    if (idleCount >= limit) return false
-    idleCount += 1
-    return true
-  })
-  return { rows, hiddenCount: sessions.length - rows.length }
-}
-
 /** Keep controlled input and RPC payload inside the session.search wire contract. */
 function sanitizeSearchQuery(value: string): string {
   const withoutNul = value.replaceAll('\0', '')
@@ -322,7 +307,8 @@ function SessionTree({
   const revealGroup = revealSessionId === undefined || !workspaceReady
     ? undefined
     : owningGroupKey(workspaces, revealSessionId)
-  const [sessionLimits, setSessionLimits] = useState<Readonly<Record<string, number>>>({})
+  const [storedWatermarks, setStoredWatermarks] = useState<Readonly<Record<string, number>>>({})
+  const [watermarkMotionKey, setWatermarkMotionKey] = useState(0)
   // Transient drag marker state; the selected mode owns the resulting order.
   const [drag, setDrag] = useState<DragState | null>(null)
   const sessionDropCommitted = useRef(false)
@@ -372,13 +358,38 @@ function SessionTree({
       }
     }
   }, [groupExpansion, parents, revealGroup, setGroupExpanded])
-  useEffect(() => {
-    if (revealSessionId === undefined || revealGroup === undefined) return
-    const group = groups.find(candidate => candidate.key === revealGroup)
-    if (group === undefined || !group.expanded || !group.sessions.some(row => row.id === revealSessionId)) return
-    if (collapsedSessionRows(group.sessions).rows.some(row => row.id === revealSessionId)) return
-    setSessionLimits(limits => limits[revealGroup] === Infinity ? limits : { ...limits, [revealGroup]: Infinity })
-  }, [groups, revealGroup, revealSessionId])
+  const baselines = new Map(groups.map(group => [
+    group.key,
+    Math.max(SESSION_WATERMARK_BASE, requiredWatermark(
+      group.expanded ? group.sessions : [], current,
+      group.key === revealGroup ? revealSessionId : undefined,
+    )),
+  ] as const))
+  const foldedKeys = new Set(groups.filter(group => !group.expanded).map(group => group.key))
+  const underFoldedAncestor = (key: string): boolean => {
+    for (let owner = parents.get(key); owner !== undefined; owner = parents.get(owner)) {
+      if (foldedKeys.has(owner)) return true
+    }
+    return false
+  }
+  const requiredWatermarks = new Map([...baselines].filter(([key]) => !underFoldedAncestor(key)))
+  const sessionWatermarks = raiseWatermarks(storedWatermarks, requiredWatermarks)
+  if (sessionWatermarks !== storedWatermarks) {
+    setStoredWatermarks(marks => raiseWatermarks(marks, requiredWatermarks))
+  }
+  const dropWatermarks = (drop: (key: string) => boolean): void => {
+    if (!Object.keys(storedWatermarks).some(drop)) return
+    setStoredWatermarks(marks => Object.fromEntries(
+      Object.entries(marks).filter(([key]) => !drop(key)),
+    ))
+    setWatermarkMotionKey(key => key + 1)
+  }
+  const withinGroup = (key: string, root: string): boolean => {
+    for (let owner: string | undefined = key; owner !== undefined; owner = parents.get(owner)) {
+      if (owner === root) return true
+    }
+    return false
+  }
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
     if (sessionDropCommitted.current) return
@@ -391,7 +402,9 @@ function SessionTree({
       ? ungroupedSessionIds
       : workspaces.find(workspace => workspace.workspaceId === activeDrag.accountKey)?.sessionIds
     if (accountSessionIds === undefined) return
-    const renderedSessions = collapsedSessionRows(group.sessions, sessionLimits[group.key]).rows
+    const renderedSessions = watermarkRows(
+      group.sessions, sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE,
+    ).rows
     const nextOrder = sessionDragOrder(accountSessionIds, renderedSessions, activeDrag, over)
     if (nextOrder !== undefined) setSessionOrder(activeDrag.accountKey, nextOrder)
   }
@@ -476,8 +489,9 @@ function SessionTree({
     const workspaceId = group.workspaceId
     const children = childrenByParent.get(group.key) ?? []
     const compatibleDrag = workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
-    const collapsed = collapsedSessionRows(group.sessions)
-    const visible = collapsedSessionRows(group.sessions, sessionLimits[group.key])
+    const watermark = sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE
+    const collapsed = watermarkRows(group.sessions, baselines.get(group.key) ?? SESSION_WATERMARK_BASE)
+    const visible = watermarkRows(group.sessions, watermark)
     const sessionsExpanded = visible.hiddenCount === 0
     rowKeys.push(`workspace:${group.key}`)
     const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1)) : []
@@ -564,9 +578,7 @@ function SessionTree({
           now={now}
           t={t}
           onToggle={() => {
-            if (group.expanded) {
-              setSessionLimits(limits => ({ ...limits, [group.key]: COLLAPSED_SESSION_LIMIT }))
-            }
+            if (group.expanded) dropWatermarks(key => withinGroup(key, group.key))
             setGroupExpanded(group.key, !group.expanded)
           }}
           onCreate={() => {
@@ -649,14 +661,17 @@ function SessionTree({
             data-row-key={`overflow:${group.key}`}
             aria-expanded={sessionsExpanded}
             onClick={() => {
-              setSessionLimits(limits => ({
-                ...limits,
-                [group.key]: sessionsExpanded
-                  ? COLLAPSED_SESSION_LIMIT
-                  : visible.hiddenCount <= COLLAPSED_SESSION_LIMIT
-                    ? Infinity
-                    : (limits[group.key] ?? COLLAPSED_SESSION_LIMIT) + COLLAPSED_SESSION_LIMIT,
+              if (sessionsExpanded) {
+                dropWatermarks(key => key === group.key)
+                return
+              }
+              setStoredWatermarks(marks => ({
+                ...marks,
+                [group.key]: visible.hiddenCount <= SESSION_WATERMARK_BASE
+                  ? Infinity
+                  : watermark + SESSION_WATERMARK_BASE,
               }))
+              setWatermarkMotionKey(key => key + 1)
             }}
           >
             {sessionsExpanded
@@ -670,19 +685,14 @@ function SessionTree({
 
   const groupRows = rootGroups.map(group => renderGroup(group, 0))
   return (
-    <div className={clsx(css.treeBody, css.wide)}>
+    <HoverCardGroup className={clsx(css.treeBody, css.wide)}>
       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
       <AnimatedRows
         className={clsx(css.list, workspaceDropAtListStart && css.listTopDropActive)}
         label={t('section.sessions')}
         rowKeys={rowKeys}
         ready={list.phase === 'ready' && workspaceReady && !nativeDragActive}
-        // Fork-owned: upstream also mixes `sessionLimits` into this key so that
-        // revealing hidden rows settles instantly. But folding a group writes
-        // sessionLimits too (reset to COLLAPSED_SESSION_LIMIT), which silently
-        // suppressed the row fade-out on every collapse. Keep only the
-        // view-replacement key so collapse/expand still animates.
-        resetKey={animationResetKey}
+        resetKey={JSON.stringify([animationResetKey, watermarkMotionKey])}
       >
         {groupsWithAggregatedStatus.length === 0 && (
           <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
@@ -690,7 +700,7 @@ function SessionTree({
         {groupRows}
       </AnimatedRows>
       <span className={css.fade} />
-    </div>
+    </HoverCardGroup>
   )
 }
 
@@ -739,7 +749,7 @@ function FlatList({
   }
   const now = Date.now()
   return (
-    <div className={clsx(css.treeBody, css.wide)}>
+    <HoverCardGroup className={clsx(css.treeBody, css.wide)}>
       <AnimatedRows
         className={clsx(css.list, css.flatList)}
         label={t('section.sessions')}
@@ -793,7 +803,7 @@ function FlatList({
         })}
       </AnimatedRows>
       <span className={css.fade} />
-    </div>
+    </HoverCardGroup>
   )
 }
 
@@ -931,7 +941,6 @@ export function WorkspaceBrowser({
   requestAddWorkspace,
   closeAddWorkspace,
   setDirectoryBusy,
-  dismissForkError,
   renderSlot,
   t,
 }: WorkspaceBrowserProps) {
@@ -1385,7 +1394,7 @@ export function WorkspaceBrowser({
           side="right"
           onPick={(workspaceId) => {
             closeAddWorkspace()
-            startSession(workspaceId)
+            startSession(workspaceId, { clearPreviousDraft: false })
           }}
           onClose={() => { closeAddWorkspace() }}
         />
@@ -1550,9 +1559,6 @@ export function WorkspaceBrowser({
         {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
         {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
       </Modal>
-      {shortcutState.forkError !== null && <Toast key={shortcutState.forkError.seq}
-        text={t(shortcutState.forkError.reason === 'unavailable' ? 'shortcut.noCompletedTurn' : 'shortcut.forkFailed')}
-        onDone={dismissForkError} />}
     </div>
   )
 }

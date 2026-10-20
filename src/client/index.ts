@@ -18,16 +18,19 @@
 import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
+import type { RemoteEndpoint } from '@deepseek-ai/dsh-api-remote-access/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
-  IWorkspaces, SessionActivity, WorkspaceArchiveError, WorkspaceSnapshot,
+  IWorkspaces, SessionActivity, WorkspaceArchiveError, WorkspaceId, WorkspaceSnapshot,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 // Type-only: pulls the Controller service merges.
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-api-remote-access/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
@@ -39,14 +42,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SettingsFormScope } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
-  type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
-  type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState, type SessionRenameDialogInjected,
-  type WorkspaceBrowserInjected, type WorkspacePickerInjected,
+  type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest, type SessionIdInjected,
+  type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState,
+  type SessionRenameDialogInjected, type WorkspaceBrowserInjected, type WorkspacePickerInjected,
 } from './contract/slots.ts'
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { createBadgeSettingsSource, ENTRY_ID, type ResolvedBadgeSettings } from './badge-settings.ts'
 import { disposeFacetStore } from './facet-store.ts'
 import { BadgeSettingsCard } from './BadgeSettingsCard.tsx'
+import { registerToasts } from './toast/register.tsx'
 import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
@@ -55,14 +59,16 @@ import { derive } from './session-actions/derived.ts'
 import { ForkSessionMenuItem } from './session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from './session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from './session-actions/RenameSession.tsx'
+import { SessionIdMenuItem } from './session-actions/SessionId.tsx'
 import { RowActionToast } from './session-actions/RowActionToast.tsx'
 import { WorkspacePicker } from './WorkspacePicker.tsx'
 import { en, zh, type WorkspaceKey } from './locales.ts'
 
-export type { UiWorkspace } from './navigation.ts'
+export type { StartSessionOptions, UiWorkspace } from './navigation.ts'
 export type {
   DirectoryFlowOwnerProps, DirectoryFlowSlotName, DirectoryPickingHooks, DirectoryPickingInjected,
-  MenuOpenState, RowToast, SessionRenameTarget, SessionRowOwnerProps, UseMenuOpenState, WorkspaceBrowserInjected,
+  MenuOpenState, RowToast, RowToastActions, SessionIdInjected, SessionRenameTarget, SessionRowOwnerProps,
+  UseMenuOpenState, WorkspaceBrowserInjected,
   SessionRowScheduleOwnerProps,
   WorkspaceBrowserProps,
   WorkspacePickerInjected, WorkspacePickerProps,
@@ -73,6 +79,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface GlobalStandardProps {
     /** Selector hook over the pure Workspace Controller snapshot. */
     useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>
+    /** Whether the current Peer may call `action` on one Workspace resource. */
+    useWorkspaceAccess: (workspaceId: WorkspaceId, action: RemoteEndpoint) => boolean
     /** Selector hook over this plugin's own settings face (badge preferences). */
     useBadgeSettings: SnapshotSelectorHook<ResolvedBadgeSettings>
   }
@@ -162,7 +170,7 @@ export type {
 } from './facets.ts'
 
 export const inject = [
-  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts',
+  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
 ]
 
 /**
@@ -186,7 +194,18 @@ export function apply(ctx: Context): void {
   const uiWorkspace = new UiWorkspaceService(
     ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
   )
-  ctx.slots.provideRoot({ hooks: { workspaces: workspaces.list } })
+  const denyWorkspaceAccess: HostObservable<boolean> = {
+    getSnapshot: () => false,
+    subscribe: () => () => {},
+  }
+  ctx.slots.provideRoot({
+    hooks: { workspaces: workspaces.list },
+    keyedHooks: {
+      workspaceAccess: (workspaceId, action) => action === undefined
+        ? denyWorkspaceAccess
+        : ctx.remoteAccess.source('workspace', workspaceId, action),
+    },
+  })
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-workspace: dictionaries')
 
   // 外部状态来源只有一张登记面（`facets.ts`）：本插件不认识任何具体插件，也不代任何
@@ -323,7 +342,10 @@ export function apply(ctx: Context): void {
     },
     unarchiveSession,
   })
-  installWorkspaceShortcuts(ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession)
+  installWorkspaceShortcuts(
+    ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession,
+    reason => { notify({ kind: 'shortcutForkFailed', reason }) },
+  )
   const archiveConfirmInjected = (): SessionArchiveConfirmInjected => ({
     hooks: { archiveRequest },
     settleSessionArchive: () => { archiveRequest.set(null) },
@@ -335,9 +357,15 @@ export function apply(ctx: Context): void {
   const forkInjected = (): ForkSessionInjected => ({
     forkSession: (sessionId) => {
       uiWorkspace.forkSession(sessionId, (childId) => {
-        ctx.get('productAnalytics')?.track('branch_session_click', { session_id: childId, parent_session_id: sessionId, click_position: 'sidebar' })
-      }).catch(() => {
-        // Fork or child-title failure leaves the list as it was.
+        ctx.get('productAnalytics')?.track('branch_session_click', {
+          session_id: childId, parent_session_id: sessionId, click_position: 'sidebar',
+        })
+      }, { allowMigration: false }).catch((reason: unknown) => {
+        const forkError = reason instanceof Error && reason.name === 'SessionForkError'
+          ? reason as { rpcError?: { code?: string } } : undefined
+        if (forkError?.rpcError?.code === 'session/migration-required') {
+          notify({ kind: 'forkRequiresOpen', sessionId })
+        }
       })
     },
   })
@@ -347,16 +375,30 @@ export function apply(ctx: Context): void {
     settleSessionRename: shortcutControls.closeRename,
     renameSession,
   })
+  const sessionIdInjected = (): SessionIdInjected => ({
+    copySessionId: async (id) => {
+      notify({ kind: await writeClipboard(id) ? 'sessionIdCopied' : 'sessionIdCopyFailed' })
+    },
+  })
+  registerToasts(ctx, viewStore, {
+    undoArchive: unarchiveSession,
+    showArchived: () => { viewInstance.actions.setArchivedFilter('show') },
+    openForkSource: (id) => {
+      if (workspaces.list.getSnapshot().archivedSessionIds.includes(id)) {
+        notify({ kind: 'archivedNotOpenable' })
+        return
+      }
+      openSession(id)
+    },
+  })
   const rowToastInjected = (): RowToastInjected => ({
     hooks: { toast: rowToast },
     dismissToast: () => { rowToast.set(null) },
-    undoArchive: unarchiveSession,
-    showArchived: () => { viewInstance.actions.setArchivedFilter('show') },
   })
   const browserInjected = (): WorkspaceBrowserInjected => ({
     // Explicit group actions keep their target; unscoped New Session inherits
     // the current Session Workspace before the recent-Workspace fallback.
-    startSession: (workspaceId) => { uiWorkspace.startSession(workspaceId) },
+    startSession: (workspaceId, options) => { uiWorkspace.startSession(workspaceId, options) },
     open: openSession,
     searchSessions,
     searchResultLimit: sessions.searchResultLimit,
@@ -373,7 +415,6 @@ export function apply(ctx: Context): void {
     requestAddWorkspace: shortcutControls.add,
     closeAddWorkspace: shortcutControls.closeAdd,
     setDirectoryBusy: shortcutControls.directoryBusy,
-    dismissForkError: shortcutControls.dismissForkError,
     hooks: { directoryFlow: browserFlowSource, hostInfo, workspaceShortcuts: shortcutControls.state, shortcuts: ctx.shortcuts.catalog },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({
@@ -412,6 +453,7 @@ export function apply(ctx: Context): void {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'rename', order: 200, locale: NS, inject: renameInjected }, RenameSessionMenuItem)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'fork', order: 300, locale: NS, inject: forkInjected }, ForkSessionMenuItem)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'archive', order: 400, locale: NS, inject: archiveInjected }, ArchiveSessionMenuItem)
+    yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'session-id', order: 450, locale: NS, inject: sessionIdInjected }, SessionIdMenuItem)
   })
   ctx.slots.inject('sidebar.workspaces.session.row.action', function* () {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'archive', order: 100, locale: NS, inject: archiveInjected }, ArchiveSessionRowButton)
@@ -426,10 +468,11 @@ export function apply(ctx: Context): void {
     yield ctx.slots.register({
       name: 'shell.overlay', id: 'workspace.session-archive', locale: NS, inject: archiveConfirmInjected,
     }, SessionArchiveConfirmDialog)
-    // The toast shares the browser's viewing store: it reads the archived
-    // filter to drop the archived notice's filter action once rows are visible.
+    // The toast dispatcher is keyed by notice kind. Business callbacks stay in
+    // registerToasts, while this registration owns the shared slot.
     yield ctx.slots.register({
-      name: 'shell.overlay', id: 'workspace.row-toast', locale: NS, store: viewStore, inject: rowToastInjected,
+      name: 'shell.overlay', id: 'workspace.row-toast', inject: rowToastInjected,
+      children: { 'workspace.toast': { kind: 'keyed', scope: 'root' } },
     }, RowActionToast)
   })
   ctx.slots.inject('conversation.hero.workspace', () => ctx.slots.register(
