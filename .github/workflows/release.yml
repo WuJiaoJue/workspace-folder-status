@@ -145,6 +145,6 @@ jobs:
           else
             gh release create "$TAG" \
               --title "${{ github.event.repository.name }} $TAG" \
-              --notes-file notes.md --latest
+              --notes-file notes.md
             gh release view "$TAG" --json url,tagName,isLatest -q '"✔ " + .url + "  tag=" + .tagName + "  latest=" + (.isLatest|tostring)'
           fi
