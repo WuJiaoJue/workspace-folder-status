@@ -220,7 +220,10 @@ jobs:
         # build/tools/tsdown.client.ts 的 CSS 虚拟模块 id，已由 fix/build-css-identity 修掉，
         # 所以这条可以 blocking —— 回归即挡。
         run: |
-          n=$(grep -rnoE "/home/[A-Za-z0-9_.-]+/" lib/ 2>/dev/null | wc -l)
+          # 注意 pipefail：act/Gitea 的 shell 是 `bash -e -o pipefail`，而 GitHub 是 `bash -e`。
+          # grep 无匹配时返回 1，在 pipefail 下会让整条管道失败并触发 -e 中止 —— 曾把"0 处泄漏"
+          # 误判成失败。所以这里显式吞掉 grep 的退出码。
+          n=$( (grep -rnoE "/home/[A-Za-z0-9_.-]+/" lib/ 2>/dev/null || true) | wc -l )
           if [ "$n" -gt 0 ]; then
             echo "::error title=产物泄漏构建机路径::lib/ 里有 $n 处 /home/... 会被发进 npm 包。"
             grep -rlE "/home/[A-Za-z0-9_.-]+/" lib/ | sed 's/^/    /'
