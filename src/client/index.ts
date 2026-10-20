@@ -46,7 +46,6 @@ import {
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { createBadgeSettingsSource, ENTRY_ID, type ResolvedBadgeSettings } from './badge-settings.ts'
 import { disposeFacetStore } from './facet-store.ts'
-import { installLegacyBridges } from './legacy/bridge.ts'
 import { BadgeSettingsCard } from './BadgeSettingsCard.tsx'
 import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
@@ -190,17 +189,9 @@ export function apply(ctx: Context): void {
   ctx.slots.provideRoot({ hooks: { workspaces: workspaces.list } })
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-workspace: dictionaries')
 
-  // 外部状态来源：本插件**不认识任何具体插件**，只有一张登记面（`facets.ts`）。
-  // 过渡期由 legacy/ 代为登记现有的两家；它们自己注册之后这条 effect 与整个 legacy
-  // 目录一并删除。放在 apply 里而不是模块求值期，是为了挂在插件生命周期上：卸载时
-  // 注销 facet，不给下一代的 facet id 留下幽灵登记。
-  ctx.effect(() => {
-    const unregister = installLegacyBridges()
-    return () => {
-      unregister()
-      disposeFacetStore()
-    }
-  }, 'ui-workspace: status facets')
+  // 外部状态来源只有一张登记面（`facets.ts`）：本插件不认识任何具体插件，也不代任何
+  // 插件登记。释放单例存储即可，来源自己的 facet 由它们的插件生命周期负责注销。
+  ctx.effect(() => () => disposeFacetStore(), 'ui-workspace: status facets')
   const shortcutControls = createWorkspaceShortcutControls()
 
   // 折叠徽标的显示偏好（`showCompletedInBadge`）。

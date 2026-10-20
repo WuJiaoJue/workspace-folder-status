@@ -163,8 +163,9 @@ export interface GroupStatusFacet<Input = unknown, Data = unknown> {
   /**
    * 来源标记。**provider 不用填**（缺省即 `provider`）。
    *
-   * 只有本插件内置的过渡适配器会显式写 `'legacy'`，用它声明"我是在替状态所有者代管"，
-   * 从而在对方接入同名 facet 时自动让位。见 {@link FACET_ORIGIN_RANK}。
+   * 代管某个来源的一方显式写 `'legacy'`，用它声明「我是在替状态所有者代管」，从而在
+   * 对方接入同名 facet 时自动让位。本插件目前不代管任何来源，这条规则为**下一次**迁移
+   * 保留。见 {@link FACET_ORIGIN_RANK}。
    */
   origin?: FacetOrigin
 }
@@ -177,7 +178,8 @@ export type FacetOrigin = 'provider' | 'legacy'
  *
  * 宿主不保证插件 apply 的先后。过渡期内"本插件代 provider 写的适配器"与"provider
  * 自己注册的 facet"会撞同一个 id：若靠顺序决胜，同一份部署今天显示、明天不显示。
- * `provider` 恒胜 `legacy` —— provider 一接入，适配器立刻让位，且不重复计数。
+ * `provider` 恒胜 `legacy`：所有者一接入，代管方立刻让位，且不重复计数。迁移因此
+ * 不需要协商发布顺序。
  */
 export const FACET_ORIGIN_RANK: Readonly<Record<FacetOrigin, number>> = Object.freeze({
   legacy: 0, provider: 1,
@@ -391,7 +393,7 @@ export function createFacetRegistry(): FacetRegistry {
  * 生产用的模块级单例登记表面。
  *
  * 与 {@link createFacetRegistry} 分开，是为了让测试能对着一张干净的表断言协议行为，
- * 而不会被别的用例在本插件 apply 里登记的 legacy facet 污染。
+ * 而不会被别的用例或别的插件登记的 facet 污染。
  */
 export const registry: FacetRegistry = createFacetRegistry()
 

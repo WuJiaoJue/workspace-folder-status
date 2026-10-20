@@ -29,18 +29,7 @@ import type {
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { workspaceDisplayTitle } from '@deepseek-ai/dsh-api-workspace-controller/default-workspace'
 
-// Cross-plugin hooks: each sibling plugin is optional and degrades to "absent".
-//
-// The lookup uses this bundle's **injected** `require` — the CJS factory parameter
-// `window.__ModuleLoader__.load({ factory: (require) => … })` supplies, which resolves
-// the module-table rows declared in package.json `dsh.client.external`.
-//
-// It must NOT be `globalThis.require`: the host defines no global require (verified in
-// the live page: `typeof globalThis.require === 'undefined'`), so a global lookup
-// silently disables every cross-plugin integration while still building and booting
-// cleanly. The bundle preset externalizes exactly these specifiers (deps.neverBundle
-// matches dsh.client.external), keeping them runtime requires instead of inlining.
-declare const require: (id: string) => unknown
+
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -52,7 +41,7 @@ import {
 } from '../tree.ts'
 import { directStatusesForGroups, withAggregatedStatus, type StatusedGroupNode } from '../group-status.ts'
 import { facetStore } from '../facet-store.ts'
-import { visibleFacets } from '../legacy/store-source.ts'
+import { visibleFacets } from '../facet-visibility.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
@@ -60,8 +49,8 @@ import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
 
 // 外部状态来源：**本文件不认识任何具体插件**。运行时只有登记面（`../facets.ts`）与
-// 它背后的存储订阅；谁想让自己的状态进折叠徽标，就按协议注册一个 facet（过渡期由
-// `../legacy/bridge.ts` 代为注册现有的两家）。
+// 它背后的存储订阅；谁想让自己的状态进折叠徽标，就按协议注册一个 facet
+// （`docs/facet-protocol.md`）。现有两家已各自注册，本插件不再代管任何来源。
 //
 // 这里只订阅一次外部存储并读一个版本号，与 facet 数量无关，所以增删来源不会改变
 // hook 调用序列（那正是逐个调 provider hook 的写法做不到的）。
