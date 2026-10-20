@@ -27,7 +27,7 @@
  *   ## [Unreleased]     +  ## [0.5.0] - 2026-10-10    (dsh-suggest-ghost)
  *   ## 未发布           +  ## 0.2.0-rc.2-fork1        (dsh-group-status，无日期)
  *
- * 用法：node .github/extract-notes.mjs <version> [--strict]
+ * 用法：node .github/extract-notes.mjs <version> [--strict] [--full]
  */
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -95,6 +95,57 @@ const typeOf = (item) => {
 
 /** 只去掉 `- **feat** ` 这个类型前缀，其余文字一字不改。 */
 const stripType = (item) => item.replace(/^-\s+\*\*[a-zA-Z]+\*\*\s*/, '- ');
+
+/**
+ * 把一条 CHANGELOG 条目收成 Release 里的一行：**取条目自带结构里的 `标题：首句`，
+ * 丢弃嵌套子条目**。不改写、不换词，只是不搬运论证部分。
+ *
+ * 为什么这么做（实测出来的）：later 的 CHANGELOG 条目本身就是 `- **type** 标题：一句话`
+ * （约 120 字），而 group-status 的条目是带 5 个嵌套子条的 459 字论证 —— Release 只是
+ * 忠实继承了源头的密度。拿这条规则回测 later 的 1.3.0：生成的 7 条与他们**已发布**的 7 条
+ * 几乎逐条对应（4 条一致，3 条他们只是手工把标题再缩几字、并把两条调了序）。
+ *
+ * 安全边界：只在**全角** `：` 与 `。` 处切；若冒号前有奇数个反引号，说明它落在代码段里
+ * （如 `pulse: true` 用的是半角冒号，或全角冒号写在 code span 内），不切 —— 上一版我按
+ * 半角 `:` 切并在外面重建加粗，把句子压坏了，已撤销。
+ */
+function releaseLine(item) {
+  const line = item
+    .split('\n')[0]
+    .replace(/^-\s+(?:\*\*[a-zA-Z]+\*\*\s*)?/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const inCode = (t, i) => ((t.slice(0, i).match(/`/g) ?? []).length) % 2 === 1;
+
+  const ci = line.indexOf('：');
+  const pi = line.indexOf('。');
+  let head;
+  let rest = '';
+  if (ci > 0 && ci <= 70 && !inCode(line, ci)) {
+    head = line.slice(0, ci);
+    rest = line.slice(ci + 1);
+  } else if (pi > 0) {
+    head = line.slice(0, pi);
+  } else {
+    head = line;
+  }
+
+  let expl = '';
+  if (rest.trim()) {
+    const k = rest.indexOf('。');
+    expl = (k >= 0 ? rest.slice(0, k + 1) : rest).trim();
+  }
+  // 标题里若已有 `**`（如 `跨插件状态改为**协议**：…`），整段再加粗会产出
+  // `**…****…**` 这种断掉的加粗。剥掉标题内部的重音符后再整体加粗——词一字不改。
+  const headPlain = head.replaceAll('*'.repeat(2), '').trim();
+  let out = head ? `**${headPlain}**${expl ? `：${expl}` : ''}` : `- ${line}`;
+  if (out.length > 200) {
+    const t = out.slice(0, 200);
+    const at = Math.max(t.lastIndexOf('、'), t.lastIndexOf('）'));
+    out = (at > 90 ? t.slice(0, at + 1) : t.trimEnd()) + '…';
+  }
+  return '- ' + out;
+}
 
 /* ─────────── 素材 ─────────── */
 
@@ -198,7 +249,7 @@ const groups = new Map();
 for (const it of changeItems) {
   const k = typeOf(it);
   if (!groups.has(k)) groups.set(k, []);
-  groups.get(k).push(stripType(it));
+  groups.get(k).push(flags.includes('--full') ? stripType(it) : releaseLine(it));
 }
 const orderedTypes = [
   ...TYPE_ORDER.filter((t) => groups.has(t)),
