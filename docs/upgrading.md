@@ -7,8 +7,8 @@
 
 ## 基线从哪来
 
-- **基线版本**：`@deepseek-ai/dsh-client-ui-workspace 0.2.0-rc.2`（DSH `dsh-v0.2.0-rc.2` 源码树）。
-- **来源**：`src/` 与 `tests/` 是上游对应包的**源码副本**，在 `d70ad82`（“build: vendor upstream source, own the build”）里一次性拷入，此后由本仓库自己构建。
+- **基线版本**：`@deepseek-ai/dsh-client-ui-workspace 0.2.1-rc.2`（DSH `dsh-v0.2.1-rc.2` 的发布产物与类型契约）。
+- **来源**：`src/` 与 `tests/` 原从上游 `0.2.0-rc.2` 源码树拷入。`0.2.1-rc.2` 一代的发布包只带 `lib/`，本次同步以官方 `.d.ts`、`lib/client.js`、官方 README 为对照基线，并按本地 `src/` 结构逐项移植。
 - **不要再 diff `lib/`**：`lib/client.js` 是 tsdown 产物（`window.__ModuleLoader__.load({ id: 'dsh-group-status', factory })` 闭包工厂），不是可 diff 的官方复制品；npm 上发布的上游包同样只带构建产物。**rebase 对象永远是 `src/`。**
 - **构建链**：`build/tools/` 是上游 tsdown 客户端预设拉平后的自包含副本（自解析 manifest、扁平导入、不扫 monorepo 路径）；`tsconfig.json` 是独立客户端配置，去掉了 monorepo base 与 project references。
 - **产物要提交**：`lib/` 随仓库提交，`dsh plugin --profile web add "github:dsh-plugin-collection/dsh-group-status"` 直接吃它。**改完 `src/` 必须 `pnpm build` 并一并提交 `lib/`**，否则从 GitHub 安装的人拿不到新行为。
@@ -48,13 +48,14 @@
 | 21 | `src/client/group-status.ts` | **本仓库新增文件**（上游没有）：徽标数字的全部计算——`GroupLiveStatus` / `EMPTY_LIVE_STATUS` / `mergeLiveStatus` / `summarizeGroupStatus`，加上多层聚合三件套 `directStatusesForGroups` → `aggregateGroupStatuses` → `withAggregatedStatus`，与渲染契约类型 `StatusedGroupNode`（`liveStatus` 必填）。纯函数、无 React 依赖，所以整条管线可脱离渲染测 |
 | 22 | `src/client/rows/WorkspaceBrowser.tsx` — 聚合管线三个 memo | `childrenByParentForAggregation`（父→子树）→ `directStatusesForGroups`（每组直接成员）→ `withAggregatedStatus`（上卷成子树合计），渲染行类型为 `StatusedGroupNode`。**两条铁律**：① 展开的分组同样必须被测量——「不画徽标」是 `groupLiveBadge` 的渲染决定，把 `expanded` 短路成 `EMPTY_LIVE_STATUS` 会让每个折叠父级按展开后代的规模少算（曾以此形态发布）；② 上游 `deriveGroups` 已不再算 `liveStatus`，若上游重新加回，本行与 #23 一起撤 |
 | 23 | `src/client/tree.ts` — `deriveGroups()` 契约变更 | 三处：不再接收 `waitingReviewSummary` / `scheduleSummary` 入参；不再给 `liveStatus` 赋值（留空由 #22 填）；**`sessions` 恒为全量成员**，折叠时不再置空。第三条最危险——渲染层必须自己按 `expanded` 决定画不画会话行与溢出按钮，漏一处就是「折叠的工作区里会话还在列」 |
-| 24 | `src/client/rows/WorkspaceBrowser.tsx` — `AnimatedRows` 的 `resetKey` | 只传视图替换键（`groupBy`/`orderBy`/`archivedFilter`）。上游把 `sessionLimits` 也混了进去，而它自己那份 `onToggle` 在**折叠**时会重置该组 limit → `resetKey` 变化 → `AnimatedRows` 跳过动画，折叠于是没有淡出。上游本意只是让「展开其余 N 个会话」瞬时呈现，属顺带踩到；改回来的代价是 reveal 也会淡入 |
+| 24 | `src/client/rows/WorkspaceBrowser.tsx` — `AnimatedRows` 的 `resetKey` | 上游用独立的 `watermarkMotionKey` 区分“水位线变化”和“视图替换”；本包同步该机制，折叠与展开都能保留淡出 |
+| 25 | `src/client/index.ts`、`navigation.ts`、`shortcuts.ts`、`Rows.tsx`、`contract/toast.ts`、`toast/` | 同步 `0.2.1-rc.2` 上游能力：Workspace access keyed hook、Session ID 菜单、草稿与 Agent preset、Fork 迁移提示、会话水位线、共享 `workspace.toast` 架构、HoverCard group 与 Tooltip portal；徽标聚合、facet 协议和设置卡片仍按本仓库原有规则运行 |
 
 `cordis.patch.yml` 只有两条：`insert` 本包、`ui-workspace` `disabled: true`。升级不动它。
 
 ## rebase 步骤
 
-1. **取新基线源码**：从新一代 DSH 源码树取 `@deepseek-ai/dsh-client-ui-workspace` 的 `src/` 与 `tests/`（不要用 npm 包的 `lib/`）。
+1. **取新基线源码**：优先从新一代 DSH 源码树取 `@deepseek-ai/dsh-client-ui-workspace` 的 `src/` 与 `tests/`。发布包不含 `src/` 时，用 `lib/types/**/*.d.ts`、`lib/client.js` 与包内 README 对照移植；不要只看类型就认定行为一致。
 2. **先看上游动了什么**：把新基线的 `src/` 与本地 `src/` 逐个 diff，重点看第 1–5、7 条改动落点周围有没有结构变化，以及槽位名 / 组件签名是否变了（见下节）。
 3. **覆盖再施加**：用新基线覆盖 `src/`、`tests/`，然后按上表逐条把本地改动重新施加（不要直接 `git merge` 整棵源码树之外的东西）。
 4. **补跨插件接入**：第 5、6、10 条属于本仓库新增能力，覆盖后要确认两个 hook 的接入点还在、`src/client/cross-plugin-summary.ts` 未被删、模板用例仍全绿。
@@ -67,18 +68,24 @@
    dsh plugin --profile web add "link:$PWD"    # 或 github: 装法
    # 重启 dsh web
    ```
-9. **验证**（见下节），然后提交：commit 信息写清新基线版本，`lib/` 一起提交；tag 带基线，如 `v0.2.0-rc.2-fork1`。
+9. **验证**（见下节），然后提交：commit 信息写清新基线版本，`lib/` 一起提交；tag 带基线，如 `v0.2.1-rc.2-fork1`。
 
 ## 测试基线
 
-`pnpm test` = `test:node`（`npm run types && node --test`，12 用例）→ `test:spec`（`vitest run`，jsdom，4 个文件 / 96 用例）。合计 **108 用例**：
+`pnpm test` = `test:node`（`npm run types && node --test`，3 个文件 / 27 用例）→ `test:spec`（`vitest run`，jsdom，8 个文件 / 165 用例）。合计 **192 用例**：
 
 | 文件 | 来源 | 覆盖 |
 |---|---|---|
+| `tests/artifacts.node.test.mjs` | **本仓库** | 构建产物存在性、`Config` 字段对齐、DSH `0.2.1-rc.2` 依赖基线（4 用例，`node --test`）|
 | `tests/cross-plugin-summary.node.test.mjs` | **本仓库** | provider 侧模板：store 订阅、迟到登记自愈、分组折叠、id 归一、帧等值（12 用例，`node --test`）|
+| `tests/facets.node.test.mjs` | **本仓库** | facet 协议：校验、来源决胜、注销、排序、重入合并、缺省合并与非法色档护栏（11 用例，`node --test`）|
 | `tests/tree.client.spec.ts` | 上游 | 分组派生、排序、会话行与搜索 |
 | `tests/browser-styles.client.spec.ts` | 上游 | 侧栏样式契约（直接读 CSS 文件） |
 | `tests/animated-rows.client.spec.tsx` | 上游 | 行动画 |
+| `tests/session-watermarks.client.spec.ts` | **本仓库** | `0.2.1-rc.2` 会话水位线：空白行、基线、活动行抬升、自动上限、搜索揭示与 stored marks 身份稳定 |
+| `tests/badge-settings.client.spec.ts` | **本仓库** | 设置源、默认值回落与引用稳定 |
+| `tests/badge-labels.client.spec.ts` | **本仓库** | 徽标文案、明细顺序、来源图标与脉冲规则 |
+| `tests/badge-settings-card.client.spec.tsx` | **本仓库** | 设置字段规格与插件详情页卡片接线 |
 | `tests/group-status.client.spec.ts` | **本仓库** | 折叠聚合：计数、待处理类互斥、子智能体、空白/归档跳过、定时任务与等待评审聚合、未安装时降级；**多层聚合**（展开的中间层必须计入折叠祖先、任意深度、父子环不死循环）；聚合路径全折叠 / 全展开两侧的 perf 护栏。注意 `groupOf()` 走的是真实管线，**不要**再在测试里手工赋 `liveStatus`——那样测试只能证明副本自己 |
 
 **7 个上游 spec 被显式跳过**（`vitest.config.ts` 顶部的 `MONOREPO_ONLY_SPECS`），因为它们在独立仓库里无解：
@@ -102,6 +109,9 @@
 - `sidebar.session.row.leading` / `sidebar.session.row.hover`
 - `conversation.hero.workspace`
 - `shell.overlay`
+- `workspace.toast`（`shell.overlay` 的 row-toast 注册项声明）
+- `workspace.toast.content`（全局共享 Factory）
+- `plugins.bundle.config`
 
 **组件签名是否变化**（本包改过的两处所在）：
 
@@ -124,8 +134,11 @@
 6. 提供方不导出 `summarizeWaitingGroup()`（旧版）时，徽标走本仓库的等价折叠，数字/色档/文案与新版一致（`tests/group-status.client.spec.ts` 锁住）；
 7. **设置项**：侧栏 **插件** → dsh-group-status（bundle 详情页，描述与「包含的组件」之间）→ 卡片分 3 个 section（折叠徽标 5 个开关 / 悬停明细 1 个开关 / 数字显示 1 个开关）→ 关掉某个开关 → 保存 → 对应来源的点/图标从徽标与悬停明细中消失、数字相应减少；再打开 → 回来。改完**无需刷新**；刷新页面后设置仍在（宿主把它写进 profile patch 的 `dsh-group-status` 条目 `config`）。表单外观应与「插件 → 官方 → 子智能体」同款：section 标题 13px/600、开关行 label 左 + switch 右、说明 12px 次级灰度、保存按钮在内容列左缘（官方 `SettingsForm` 的定位）；
 8. **设置面缺失时**（把 `Config` 临时去掉再构建）→ 插件照常加载，徽标按默认「显示已完成」；console 无 `cannot get property … without inject` 一类报错；
-9. 浏览器 console 无报错；
+9. 浏览器 console 无本插件错误；
 10. 中 / 英界面语言切换后文案跟随。
+11. 会话行的 `...` 菜单末尾有「复制 Session ID」；点击后菜单关闭，成功与失败各出现一次全局提示，且不会打开会话或加载历史。
+12. 组内第 6 条之后的会话进入水位线规则：运行中、子智能体运行中、等待用户、未读完成、当前打开或搜索揭示的会话自动抬高水位线；折叠父组或列表卸载时水位线回落，不写入持久化 store。
+13. 无权限 Peer 不显示 fork 菜单项；有权限但源会话需要迁移时，菜单提示提供「打开原会话」，只导航、不自动重试 fork。快捷键失败通过共享 `workspace.toast` 显示，不再由 `WorkspaceBrowser` 自己挂旧 Toast。
 
 ## 回滚
 
@@ -136,7 +149,7 @@ dsh plugin --profile web remove dsh-group-status
 
 ## 已知限制
 
-- 本包 vendored 上游源码，不是公共 API 消费方：上游重构时 rebase 成本可能不止「重新施加 10 条」。
-- 设置卡片依赖宿主 0.2.0 的 `configForms.whileServed`（0.1.7 settings rewrite 一代）。更早一代拿不到它时只跳过插件页卡片，折叠徽标读取设置面与其余功能不受影响。
+- 本包 vendored 上游源码，不是公共 API 消费方：上游重构时 rebase 成本可能不止「重新施加 25 条」。
+- 设置卡片依赖宿主的 `configForms.whileServed`（0.1.7 settings rewrite 一代，`0.2.1-rc.2` 仍在）。更早一代拿不到它时只跳过插件页卡片，折叠徽标读取设置面与其余功能不受影响。
 - 聚合计数与展开态共用同一份派生，超大分组（数百会话）每次状态变更多一次全量 traverse，与展开渲染同量级。
 - 定时任务按「组内有」计 1，不按任务条数累计，也不占 hover 明细行。

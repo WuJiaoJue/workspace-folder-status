@@ -6,9 +6,9 @@
 
 [中文](./README.md) | **English**
 
-[![version](https://img.shields.io/badge/version-0.2.0-0EA5E9)](https://github.com/dsh-plugin-collection/dsh-group-status)
+[![version](https://img.shields.io/badge/version-0.3.0-0EA5E9)](https://github.com/dsh-plugin-collection/dsh-group-status)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.0--rc.2-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.1--rc.2-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 </div>
 
@@ -178,9 +178,9 @@ dsh plugin --profile web remove dsh-group-status
 
 | Item | Value |
 |---|---|
-| DSH core | `0.2.0-rc.2` |
-| peer dependency | `@deepseek-ai/cordis ~4.0.4` |
-| Upstream base | `@deepseek-ai/dsh-client-ui-workspace 0.2.0-rc.2` (source vendored into `src/`) |
+| DSH core | `0.2.1-rc.2` |
+| peer dependency | `@deepseek-ai/cordis ~4.0.5` |
+| Upstream base | `@deepseek-ai/dsh-client-ui-workspace 0.2.1-rc.2` (source vendored into `src/`) |
 | Install shape | fork override: same slots registered, stock row disabled via `cordis.patch.yml` |
 | Optional partners | dsh-later (schedule summary), dsh-gitea-dispatch (waiting-review summary) |
 
@@ -194,7 +194,7 @@ Every upstream generation requires a manual rebase — see the [upgrade runbook]
 pnpm install
 pnpm build        # tsc typecheck + tsdown bundle → lib/
 pnpm watch        # rebuild on src/ changes (a dsh web restart is still required)
-pnpm test         # = test:node (node --test, 12 cases) + test:spec (vitest + jsdom, 96 cases)
+pnpm test         # = test:node (node --test, 27 cases) + test:spec (vitest + jsdom, 165 cases)
 pnpm test:spec    # the upstream spec suite only
 ```
 
