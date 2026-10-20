@@ -22,7 +22,8 @@
     "url": "https://github.com/dsh-plugin-collection/dsh-group-status/issues"
   },
   "engines": {
-    "node": "^22.19 || >=24"
+    "node": "^22.19 || >=24",
+    "dsh": ">=0.2.0-rc.2 <0.3.0-0"
   },
   "type": "module",
   "icon": "./icon.svg",
