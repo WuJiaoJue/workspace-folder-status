@@ -112,7 +112,7 @@
 
 - **facet 协议是本包对外的契约**（[`docs/facet-protocol.md`](facet-protocol.md)）。改它的任何必填成员或语义都要升 `GROUP_STATUS_FACET_PROTOCOL_VERSION` 并在文档变更记录里写迁移；provider 侧只认 `require('dsh-group-status/client')` 的运行时符号，类型抄结构声明，不 import 本包。
 - 聚合与渲染**按协议工作，不按来源分支**：新状态源接入不应改动 `group-status.ts` / `badge-labels.ts` / `rows/GroupBadge.tsx`。上游换代若要求这三处重新施加，检查点是没有把来源名写回去。
-- 过渡适配器在 `src/client/legacy/`（`waiting-review.ts` / `schedule.ts` / `register-legacy-facets.tsx` / `bridge.ts` / `store-source.ts`），代 dsh-gitea-dispatch 与 dsh-later 登记。两家自注册后整目录与 `package.json` 的两条 `dsh.client.external` 一并删除。
+- 本插件**不代管任何来源**：不要为了「方便」重新引入 `legacy/` 式适配器，两家现有接入方各自注册（见 [`facet-protocol.md`](facet-protocol.md) 的迁移史一节)。
 - provider 侧模板的导出面（`createSummaryStore` / `createSummaryRegistry` / `summarizeGroup` / `mapEquals` / `entryFor` / `normalizeSessionId` / `defaultCanPoll`）——它被别的插件**复制**走，改名会静默影响它们的调用点；设计说明与「复制、不要 import」的实测依据写在 [`src/client/cross-plugin-summary.ts`](../src/client/cross-plugin-summary.ts) 文件头
 ## 验证
 

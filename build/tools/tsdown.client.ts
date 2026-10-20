@@ -34,6 +34,30 @@ const INLINE_CSS_VIRTUAL_PREFIX = '\0dsh-inline-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 const INLINE_CSS_QUERY = '?inline'
 
+/**
+ * A stylesheet's identity **inside a virtual module id**, stated repo-relative.
+ *
+ * Embedding the absolute path made the bundle machine-dependent twice over:
+ * the `//#region` marker carried `/home/<user>/…` into the published artifact, and
+ * lightningcss derives the css-module `[hash]` prefix from `filename` — so the same
+ * source built in another directory produced different class names, which means
+ * `lib/client.js` could never be reproduced (or diffed against the committed
+ * artifact) anywhere but the machine that first built it.
+ *
+ * Watch-graph and disk reads still need the absolute path; that is `cssModulePath`.
+ */
+function cssModuleKey(absolutePath: string): string {
+  const rel = relative(REPOSITORY_ROOT, absolutePath)
+  // Outside the repository (a linked package under node_modules, another volume):
+  // keep the absolute path rather than emit a `../..` trail that could collide.
+  return rel.startsWith('..' + sep) ? absolutePath : rel.split(sep).join('/')
+}
+
+/** Inverse of {@link cssModuleKey}. */
+function cssModulePath(key: string): string {
+  return isAbsolute(key) ? key : resolvePath(REPOSITORY_ROOT, key)
+}
+
 /** Emit one plugin-owned style injector and an optional CSS Modules export. */
 function styleInjectionModule(
   id: string,
@@ -556,16 +580,17 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
       resolveId(source: string, importer: string | undefined) {
         if (!source.endsWith('.module.css')) return null
         const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
-        return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+        return CSS_VIRTUAL_PREFIX + cssModuleKey(abs) + CSS_VIRTUAL_SUFFIX
       },
       async load(virtualId: string) {
         if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
-        const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const key = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const fileId = cssModulePath(key)
         // The virtual id otherwise hides the physical stylesheet from Rolldown's watch graph.
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
         const { code, exports: cssExports } = transform({
-          filename: fileId,
+          filename: key,
           code: source,
           cssModules: { pattern: '[hash]_[local]' },
           minify: true,
@@ -582,14 +607,15 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
         if (!source.endsWith(`.css${INLINE_CSS_QUERY}`)) return null
         const stylesheet = source.slice(0, -INLINE_CSS_QUERY.length)
         const abs = importer !== undefined ? sourceAssetPath(stylesheet, importer) : stylesheet
-        return INLINE_CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+        return INLINE_CSS_VIRTUAL_PREFIX + cssModuleKey(abs) + CSS_VIRTUAL_SUFFIX
       },
       async load(virtualId: string) {
         if (!virtualId.startsWith(INLINE_CSS_VIRTUAL_PREFIX)) return null
-        const fileId = virtualId.slice(INLINE_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const key = virtualId.slice(INLINE_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const fileId = cssModulePath(key)
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
-        const { code } = transform({ filename: fileId, code: source, minify: true })
+        const { code } = transform({ filename: key, code: source, minify: true })
         return `export default ${JSON.stringify(code.toString())};`
       },
     }, {
@@ -597,14 +623,15 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
       resolveId(source: string, importer: string | undefined) {
         if (!source.endsWith('.css') || source.endsWith('.module.css')) return null
         const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
-        return GLOBAL_CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+        return GLOBAL_CSS_VIRTUAL_PREFIX + cssModuleKey(abs) + CSS_VIRTUAL_SUFFIX
       },
       async load(virtualId: string) {
         if (!virtualId.startsWith(GLOBAL_CSS_VIRTUAL_PREFIX)) return null
-        const fileId = virtualId.slice(GLOBAL_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const key = virtualId.slice(GLOBAL_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const fileId = cssModulePath(key)
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
-        const { code } = transform({ filename: fileId, code: source, minify: true })
+        const { code } = transform({ filename: key, code: source, minify: true })
         return styleInjectionModule(id, fileId, code.toString())
       },
     }],

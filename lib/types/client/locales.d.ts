@@ -107,11 +107,6 @@ export declare const zh: {
     'status.compact.planReview': string;
     'status.compact.answer': string;
     'status.needsAttention': string;
-    'status.waitingReview': string;
-    'status.waitingReviewOverdue': string;
-    'status.waitingReviewImminent': string;
-    'status.waitingReviewLeft': string;
-    'status.scheduled': string;
     'status.completed': string;
     'hover.created': string;
     'hover.copied': string;
@@ -252,11 +247,6 @@ export declare const en: {
     'status.compact.planReview': string;
     'status.compact.answer': string;
     'status.needsAttention': string;
-    'status.waitingReview': string;
-    'status.waitingReviewOverdue': string;
-    'status.waitingReviewImminent': string;
-    'status.waitingReviewLeft': string;
-    'status.scheduled': string;
     'status.completed': string;
     'hover.created': string;
     'hover.copied': string;

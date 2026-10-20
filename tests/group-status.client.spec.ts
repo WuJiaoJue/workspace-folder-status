@@ -16,6 +16,7 @@ import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-
 import type {
   SessionPendingInteraction, SessionStatus, SessionStatusSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session/client'
+import { bindableFacet, registeredFacet } from './support/facets.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { deriveGroups, owningParentFolder, type GroupNode } from '../src/client/tree.ts'
 import {
@@ -23,9 +24,7 @@ import {
   EMPTY_LIVE_STATUS, mergeLiveStatus,
   type GroupLiveStatus, type StatusedGroupNode,
 } from '../src/client/group-status.ts'
-import { GROUP_STATUS_FACET_PROTOCOL_VERSION, defaultMergeFold, type AnyFacet, type RegisteredFacet } from '../src/client/facets.ts'
-import { createWaitingReviewFacet, summarizeWaitingGroupLocally, waitingDeadlineOf, type WaitingReviewSummarizer, type WaitingReviewSummaryMap } from '../src/client/legacy/waiting-review.ts'
-import { createScheduleFacet, type ScheduleSummaryMap } from '../src/client/legacy/schedule.ts'
+import { FACET_TONE_RANK, GROUP_STATUS_FACET_PROTOCOL_VERSION, defaultMergeFold, type AnyFacet, type RegisteredFacet } from '../src/client/facets.ts'
 
 const sid = (id: string): SessionId => id as SessionId
 const wid = (id: string): WorkspaceId => id as WorkspaceId
@@ -81,22 +80,34 @@ const EMPTY: GroupLiveStatus = EMPTY_LIVE_STATUS
 /** 把一个来源的快照伪装成登记项，走的就是生产里那条路径。 */
 export const registeredFacet = (facet: AnyFacet): RegisteredFacet => ({ facet, sequence: 0 })
 
-/** dsh-gitea-dispatch 摘要面的过渡适配器（同生产装配）。 */
-const waitingFacet = (
-  snapshot: WaitingReviewSummaryMap | undefined,
-  summarize?: WaitingReviewSummarizer,
-): RegisteredFacet[] => [registeredFacet(
-  createWaitingReviewFacet({
-    subscribe: () => () => undefined,
-    getSnapshot: () => snapshot,
-    ...(summarize === undefined ? {} : { summarize }),
-  }) as AnyFacet,
-)]
-
-/** dsh-later 摘要面的过渡适配器。 */
-const scheduleFacet = (snapshot: ScheduleSummaryMap | undefined): RegisteredFacet[] => [registeredFacet(
-  createScheduleFacet({ subscribe: () => () => undefined, getSnapshot: () => snapshot }) as AnyFacet,
-)]
+/**
+ * 造一个来源：语义与真实提供方一致（数会话、报色档），但由测试自己声明。
+ *
+ * ⚠️ 刻意不再引 `legacy/` 那两个适配器：它们随迁移一起删了，而本文件的被测对象是
+ * **聚合的通用性**，不是某个来源的字段口径。用真实适配器会把"本插件不认识任何来源"
+ * 这条断言悄悄做成"认识两个来源"。
+ */
+const countingFacet = (id: string, hits: ReadonlyMap<string, { tone: 'info' | 'warn' | 'error' }>) =>
+  registeredFacet(bindableFacet(id, {
+    getSnapshot: () => hits,
+    fold: (snapshot: unknown, sessionIds: readonly string[]) => {
+      const table = (snapshot ?? new Map()) as ReadonlyMap<string, { tone: 'info' | 'warn' | 'error' }>
+      let count = 0
+      let tone: 'info' | 'warn' | 'error' = 'info'
+      for (const id of sessionIds) {
+        const hit = table.get(id)
+        if (hit === undefined) continue
+        count += 1
+        if (FACET_TONE_RANK[hit.tone] > FACET_TONE_RANK[tone]) tone = hit.tone
+      }
+      return { count, tone, pulse: tone === 'error', data: { tone } }
+    },
+    merge: (a, b) => ({
+      count: a.count + b.count,
+      tone: FACET_TONE_RANK[b.tone] > FACET_TONE_RANK[a.tone] ? b.tone : a.tone,
+      pulse: a.pulse || b.pulse,
+    }),
+  }))
 
 const groupOf = (
   state: SessionListState,
@@ -245,109 +256,66 @@ describe('folded group live status', () => {
 })
 
 describe('registered status sources', () => {
-  // 这一组测的是「协议跑通」：来源通过 facet 进来，聚合只认 count/tone/pulse/data，
-  // 从不解释 data。所以断言只看两件事：来源报的数字进没进表，色档与脉冲有没有跟着走。
-  // 表里存的是「facet + 它的折果」：断言只比折果（协议契约），比 facet 会退化成比对象身份。
+  // 这组测的是**聚合的通用性**：来源经 facet 进来，核心只认 count / tone / pulse / data，
+  // 从不解释 data。断言只看三件事：来源报的数字进没进表、色档与脉冲跟着不走样、
+  // 宿主自己的计数不受影响。来源内部口径（id 拼写、窗口算法、委托谁的聚合）已由两家
+  // 自己持有并各自测试，这里再测一遍等于把"本插件不认识任何来源"重新写成"认识两个"。
   const foldOf = (group: StatusedGroupNode, id: string) => group.liveStatus.facets.get(id)?.fold
 
-  it('把定时任务的会话数折成该来源的 count，色档随最紧急的一档', () => {
+  it('按会话命中数折出 count，色档随最紧急的一档，脉冲由来源声明', () => {
     const state = list([summary('a', 30), summary('b', 20), summary('idle', 10)])
-    const schedule = new Map<string, ScheduleSummaryMap extends ReadonlyMap<string, infer E> ? E : never>([
-      ['a', { count: 2, pausedCount: 1, nextAt: 1_000, state: 'scheduled' }],
-      ['b', { count: 3, pausedCount: 0, nextAt: 500, state: 'overdue' }],
-    ] as never)
-    const group = groupOf(state, new Map(), { facets: scheduleFacet(schedule) })
-    expect(foldOf(group, 'dsh-later.schedule')).toEqual({
-      count: 2, tone: 'error', pulse: true, data: { tasks: 5, state: 'overdue' },
-    })
-    // 宿主自己那几项不受影响：外部来源不该能改写不属于它的计数。
+    const hits = new Map([
+      ['a', { tone: 'info' as const }],
+      ['b', { tone: 'error' as const }],
+    ])
+    const group = groupOf(state, new Map(), { facets: [countingFacet('x.counts', hits)] })
+    expect(foldOf(group, 'x.counts')).toEqual({ count: 2, tone: 'error', pulse: true, data: { tone: 'error' } })
+    // 外部来源不得改写宿主自己的计数。
     expect(group.liveStatus.running).toBe(0)
   })
 
-  it('等评审的来源：id 口径两种拼写都能命中同一个成员', () => {
-    const state = list([summary('plain', 30), summary('session-prefixed', 20), summary('idle', 10)])
-    const waiting = new Map([
-      ['plain', { prNumber: 7, state: 'waiting' as const }],
-      ['prefixed', { prNumber: 8, state: 'overdue' as const }],
-    ])
-    const group = groupOf(state, new Map(), { facets: waitingFacet(waiting) }, 0)
-    expect(foldOf(group, 'dsh-gitea-dispatch.waiting-review')).toEqual({
-      count: 2, tone: 'error', pulse: false,
-      data: { prNumbers: [7, 8], state: 'overdue' },
-    })
-  })
-
-  it('提供方按 webhook- 前缀发布的键也能命中（少一种拼写就静默漏算）', () => {
-    // The publisher keys by whatever the Host SessionId is, and Sessions dispatched from
-    // a webhook are genuinely `webhook-…`. 只按剥前缀后的形态查会永远 miss 且不报错。
-    const state = list([summary('webhook-42', 30)])
-    const keyed = new Map([['webhook-42', { prNumber: 9, state: 'waiting' as const }]])
-    const normalized = new Map([['42', { prNumber: 9, state: 'waiting' as const }]])
-    expect(foldOf(groupOf(state, new Map(), { facets: waitingFacet(keyed) }), 'dsh-gitea-dispatch.waiting-review')?.count).toBe(1)
-    expect(foldOf(groupOf(state, new Map(), { facets: waitingFacet(normalized) }), 'dsh-gitea-dispatch.waiting-review')?.count).toBe(1)
-  })
-
-  it('等待窗口折成组内最早的未到期截止', () => {
+  it('组里没有命中时该来源整块缺席（不进表、不进数字、不画图标）', () => {
     const state = list([summary('a', 30), summary('b', 20)])
-    const waiting = new Map([
-      ['a', { prNumber: 1, state: 'waiting' as const, startedAt: 1000, waitMaxSec: 60 }],
-      ['b', { prNumber: 2, state: 'waiting' as const, deadline: 5000 }],
-    ])
-    const dataOf = (facets: readonly RegisteredFacet[]) =>
-      foldOf(groupOf(state, new Map(), { facets }, 100), 'dsh-gitea-dispatch.waiting-review')?.data as { nextDeadline?: number }
-    // 1000 + 60s = 61000 与绝对 5000 都还在 now=100 之前，取更早的那个。
-    expect(dataOf(waitingFacet(waiting)).nextDeadline).toBe(5000)
-    // 已过期由 tone 表达，不留一个负倒计时。
-    expect(dataOf(waitingFacet(new Map([['a', { prNumber: 1, state: 'overdue' as const, deadline: 50 }]]))).nextDeadline).toBeUndefined()
-    // 完全没窗口（CI 没带 waitMaxSec）= 在等，但时长未知。
-    expect(dataOf(waitingFacet(new Map([['a', { prNumber: 1, state: 'waiting' as const }]]))).nextDeadline).toBeUndefined()
+    const hits = new Map([['elsewhere', { tone: 'warn' as const }]])
+    const group = groupOf(state, new Map(), { facets: [countingFacet('x.counts', hits)] })
+    expect(group.liveStatus.facets.size).toBe(0)
   })
 
-  it('提供方导出自己的聚合时就用它，而不是本地重算一遍', () => {
+  it('来源读快照抛错时按"此刻没有数据"折叠，不把异常扩散到徽标', () => {
     const state = list([summary('a', 30)])
-    // 本地折叠会答 1 个 / PR #1 / waiting；委托的答案不同，才能证明走的是提供方。
-    const waiting = new Map([['a', { prNumber: 1, state: 'waiting' as const }]])
-    const seen: { ids?: readonly string[], now?: number } = {}
-    const summarize: WaitingReviewSummarizer = (_summary, ids, now) => {
-      seen.ids = ids
-      seen.now = now
-      return { sessions: 3, prNumbers: [11, 12, 13], state: 'overdue', nextDeadline: 4242 }
-    }
-    const group = groupOf(state, new Map(), { facets: waitingFacet(waiting, summarize) }, 7)
-    expect(foldOf(group, 'dsh-gitea-dispatch.waiting-review')).toEqual({
-      count: 3, tone: 'error', pulse: false,
-      data: { prNumbers: [11, 12, 13], state: 'overdue', nextDeadline: 4242 },
-    })
-    expect(seen.ids).toEqual(['a'])
-    expect(seen.now).toBe(7)
-  })
-
-  it('一个来源折坏了不该带塌徽标，也不该吞掉别的来源', () => {
-    const state = list([summary('a', 30), summary('b', 20)])
-    const boom = registeredFacet({
-      protocol: GROUP_STATUS_FACET_PROTOCOL_VERSION, id: 'x.boom',
-      subscribe: () => () => undefined,
+    const seen: unknown[] = []
+    const spy = registeredFacet(bindableFacet('x.badSnapshot', {
       getSnapshot: () => { throw new Error('provider store exploded') },
-      fold: () => { throw new Error('fold exploded') },
-    } as AnyFacet)
-    const waiting = new Map([['a', { prNumber: 7, state: 'waiting' as const }]])
-    const group = groupOf(state, new Map(), { facets: [boom, ...waitingFacet(waiting)] }, 0)
-    expect([...group.liveStatus.facets.keys()]).toEqual(['dsh-gitea-dispatch.waiting-review'])
-    expect(group.liveStatus.facets.get('dsh-gitea-dispatch.waiting-review')?.fold.count).toBe(1)
-    expect(group.liveStatus.running).toBe(0)
+      fold: (snapshot: unknown) => {
+        seen.push(snapshot)
+        return { count: 0, tone: 'info', pulse: false }
+      },
+    }))
+    const group = groupOf(state, new Map(), { facets: [spy] })
+    expect(seen).toEqual([undefined])
+    expect(group.liveStatus.facets.size).toBe(0)
   })
 
-  it('count <= 0 的来源不进表（数字、图标、文案都当它不存在）', () => {
+  it('来源折叠抛错时只丢掉它自己，其余来源与宿主计数照常', () => {
     const state = list([summary('a', 30)])
-    const empty = registeredFacet({
-      protocol: GROUP_STATUS_FACET_PROTOCOL_VERSION, id: 'x.quiet',
-      subscribe: () => () => undefined, getSnapshot: () => undefined,
-      fold: () => ({ count: 0, tone: 'error', pulse: true }),
-    } as AnyFacet)
-    expect(groupOf(state, new Map(), { facets: [empty] }).liveStatus.facets.size).toBe(0)
+    const statuses: SessionStatusSnapshot = new Map([[sid('a'), status(undefined, { running: true })]])
+    const badFold = registeredFacet(bindableFacet('x.badFold', {
+      fold: () => { throw new Error('fold exploded') },
+    }))
+    const group = groupOf(state, statuses, { facets: [badFold, countingFacet('x.ok', new Map([['a', { tone: 'warn' as const }]]))] })
+    expect([...group.liveStatus.facets.keys()]).toEqual(['x.ok'])
+    expect(group.liveStatus.running).toBe(1)
   })
 
-  it('degrades to no cross-plugin signal when neither publisher is installed', () => {
+  it('两个来源各自独立成表项，顺序按 order（未声明者随后）', () => {
+    const state = list([summary('a', 30)])
+    const first = registeredFacet(bindableFacet('x.second', { order: 20, fold: () => ({ count: 1, tone: 'info', pulse: false }) }))
+    const second = registeredFacet(bindableFacet('x.first', { order: 10, fold: () => ({ count: 2, tone: 'warn', pulse: false }) }))
+    const group = groupOf(state, new Map(), { facets: [second, first] })
+    expect([...group.liveStatus.facets.keys()]).toEqual(['x.first', 'x.second'])
+  })
+
+  it('degrades to no cross-plugin signal when no source is registered', () => {
     const state = list([summary('a', 30)])
     const group = groupOf(state, new Map([[sid('a'), status(undefined, { running: true })]]))
     expect(group.liveStatus).toEqual({ ...EMPTY, running: 1 })

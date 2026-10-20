@@ -90,7 +90,7 @@ Saving applies it live, with no refresh; the Host writes it into the profile pat
 
 A folded group badge can show state owned by **another plugin**. The direction is inverted: **the owner registers its facts in**, and this plugin's aggregation and render paths **know no specific source** (not one branch keyed on who is reporting). The full contract lives in [docs/facet-protocol.md](docs/facet-protocol.md).
 
-Two exceptions remain open, both transitional: the `legacy/` directory still houses one proxy adapter each for dsh-later and dsh-gitea-dispatch (each yields automatically via `FACET_ORIGIN_RANK` once the owner registers a facet under the same id, at which point the directory goes away); and those two sources each own a dedicated setting, so adding a **third** toggle still means 14 touchpoints in this plugin (cost and the planned consolidation are in that document's final section, 「已知取舍」 — the contract docs are Chinese-only).
+One exception remains open: the two current sources each have a dedicated setting, so adding a **third** one still touches 14 places in this plugin (cost and the way to close it are in the protocol doc's Known trade-offs). The transitional hosting is closed: `legacy/` and its two `dsh.client.external` entries are deleted, and both dsh-later and dsh-gitea-dispatch now register their own facets.
 
 ```js
 const gs = require('dsh-group-status/client')
@@ -115,14 +115,14 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 
 The badge is a React component, and hook order must be constant across renders of one component. Facets register and unregister at runtime: calling each owner's hook would change the hook count the moment the registry moves, and React throws "Rendered more hooks than during the previous render". This plugin subscribes once and reads one version number, however many sources stand behind it.
 
-### Transition: the two sources this plugin still hosts
+### Who is connected today
 
-| facet id | Today | What the owner must do |
-|---|---|---|
-| `dsh-gitea-dispatch.waiting-review` | this plugin reads the `dsh-gitea-dispatch/client` summary store and registers on its behalf | register the same id itself |
-| `dsh-later.schedule` | this plugin reads the `dsh-later/client` summary store and registers on its behalf | register the same id itself |
+| facet id | Owner |
+|---|---|
+| `dsh-gitea-dispatch.waiting-review` | registered by dsh-gitea-dispatch itself (its issue #47) |
+| `dsh-later.schedule` | registered by dsh-later itself (its issue #36) |
 
-Once both do, delete [`src/client/legacy/`](src/client/legacy) and the two matching `dsh.client.external` entries. Until then that path keeps working and nothing breaks if neither adopts it.
+This plugin keeps no field types, tone mapping or wording for either. A third source follows the contract below and needs no change here, unless it also wants its own toggle.
 
 > ⚠️ Cross-plugin **value imports** do not work in this project (measured: `Could not resolve "dsh-group-status"`: a client bundle is a self-contained closure factory). Owners therefore use only the runtime symbols from `require('dsh-group-status/client')` and never `import` this package's types; copying the structural declarations from the protocol doc is enough.
 ---

@@ -16,7 +16,6 @@ import {
 } from '../src/client/badge-labels.ts'
 import { EMPTY_LIVE_STATUS, type FacetEntry, type GroupLiveStatus } from '../src/client/group-status.ts'
 import { GROUP_STATUS_FACET_PROTOCOL_VERSION, type AnyFacet, type AnyFacetFold } from '../src/client/facets.ts'
-import { createWaitingReviewFacet, type WaitingReviewSummaryMap } from '../src/client/legacy/waiting-review.ts'
 
 /** 真字典 + 宿主同款插值，保证测的是实际会显示的句子。 */
 const t = ((key: string, options?: Record<string, string | number>): string => {
@@ -155,76 +154,29 @@ describe('陌生来源不写任何分支也能被读出来', () => {
   })
 })
 
-describe('等待评审适配器交出的文案（PR 号、倒计时、超时）', () => {
-  /** 用真实适配器造 entry：测的是 provider 会拿到的那句话，不是手抄的副本。 */
-  const waitingStatus = (snapshot: WaitingReviewSummaryMap, now = NOW): GroupLiveStatus => {
-    const built = createWaitingReviewFacet({
-      subscribe: () => () => undefined,
-      getSnapshot: () => snapshot,
-    })
-    const fold = built.fold(snapshot, [...snapshot.keys()], now) as AnyFacetFold
-    return status({ facets: table({ facet: built as AnyFacet, fold }) })
-  }
-
-  it('把两个状态说成两句话，而不只是两种颜色', () => {
-    const plain = waitingStatus(new Map([['a', { prNumber: 7, state: 'waiting' }]]))
-    const late = waitingStatus(new Map([['a', { prNumber: 7, state: 'overdue' }]]))
-    expect(facetLines(plain, t, NOW)[0]).toBe('1 等待评审 · #7')
-    expect(facetLines(late, t, NOW)[0]).toBe('1 等待评审（已超时） · #7')
+describe('来源交出的文本原样呈现，本插件不重算也不改写', () => {
+  // 徽标对文案只做两件事：拼上计数位、按 order 排。曾经的写法是按状态名反推句子，于是
+  // 提供方改了口径这里就悄悄说谎（CHANGELOG 0.2.3 第一条）。现在句子归提供方，这里只
+  // 锁"原样"这条：包含 #号、括号、倒计时形状的句子都不被加工。
+  const verbatim = '1 等待评审（剩 3分钟） · #2783, #15, +2'
+  const s = status({ facets: table(facet('x.rich', { count: 1, tone: 'warn', pulse: false }, { label: () => verbatim })) })
+  it('label 的结果逐字进 aria-label 与悬停明细', () => {
+    expect(groupLiveLabel(s, t, ALL_ON, NOW)).toBe(verbatim)
+    expect(hoverStatusLines(s, t, ALL_ON, NOW)[0]?.text).toBe(verbatim)
   })
-
-  it('倒计时只到分钟：徽标不在两次通知之间撒谎', () => {
-    const at = (leftMs: number) => waitingStatus(
-      new Map([['a', { prNumber: 1, state: 'waiting' as const, deadline: NOW + leftMs }]]),
-    )
-    expect(facetLines(at(3 * 60_000 + 12_000), t, NOW)[0]).toBe('1 等待评审（剩 3分钟） · #1')
-    expect(facetLines(at(2 * 3_600_000), t, NOW)[0]).toBe('1 等待评审（剩 2小时） · #1')
-    expect(facetLines(at(40_000), t, NOW)[0]).toBe('1 等待评审（1分钟内到期） · #1')
+  it('多来源时各占一段，分隔符与顺序由本插件决定', () => {
+    const two = status({ facets: table(
+      facet('x.a', { count: 2, tone: 'info', pulse: false }, { label: () => '2 定时任务' }),
+      facet('x.b', { count: 1, tone: 'error', pulse: false }, { label: () => '1 等待评审（已超时） · #990002' }),
+    ) })
+    expect(groupLiveLabel(two, t, ALL_ON, NOW)).toBe('2 定时任务 · 1 等待评审（已超时） · #990002')
+    expect(facetCountTotal(two)).toBe(3)
   })
-
-  it('CI 没给窗口时不编造倒计时', () => {
-    const s = waitingStatus(new Map([
-      ['a', { prNumber: 15, state: 'waiting' }],
-      ['b', { prNumber: 2783, state: 'waiting' }],
-    ]))
-    expect(facetLines(s, t, NOW)[0]).toBe('2 等待评审 · #15, #2783')
-    expect(facetLines(s, t, NOW)[0]).not.toContain('剩')
-  })
-
-  it('两个成员等同一个 PR 时只念一次号', () => {
-    // 提供方按**每个等待成员**列一个 PR，所以 [15, 15] 是真实形状。
-    const s = waitingStatus(new Map([
-      ['a', { prNumber: 15, state: 'waiting' }],
-      ['b', { prNumber: 15, state: 'waiting' }],
-    ]))
-    expect(facetLines(s, t, NOW)[0]).toBe('2 等待评审 · #15')
-  })
-
-  it('号太多时封顶并给出剩余数', () => {
-    const s = waitingStatus(new Map(['1', '2', '3', '4', '5'].map(
-      key => [key, { prNumber: Number(key), state: 'waiting' as const }],
-    )))
-    expect(facetLines(s, t, NOW)[0]).toBe('5 等待评审 · #1, #2, #3, +2')
-  })
-
-  it('合并子树后文案仍读得出：PR 并集去重升序、overdue 压过 waiting', () => {
-    const built = createWaitingReviewFacet({ subscribe: () => () => undefined, getSnapshot: () => undefined })
-    const merged = built.merge!(
-      { count: 1, tone: 'warn', pulse: false, data: { prNumbers: [20, 15], state: 'waiting' as const, nextDeadline: 9000 } },
-      { count: 1, tone: 'error', pulse: false, data: { prNumbers: [15, 7], state: 'overdue' as const } },
-    )
-    // 另一侧的未到期截止**留着**：组里还有人在等的窗口就该能被倒计时出来，
-    // 只是文案优先说"已超时"（overdue 压过 waiting，与提供方行内一致）。
-    expect(merged.data).toEqual({ prNumbers: [7, 15, 20], state: 'overdue', nextDeadline: 9000 })
-    expect(built.label!(merged, { now: NOW, t: t as never })).toBe('2 等待评审（已超时） · #7, #15, #20')
-    // 两侧都还在等时，取更早的那个未到期截止。
-    const both = built.merge!(
-      { count: 1, tone: 'warn', pulse: false, data: { prNumbers: [1], state: 'waiting' as const, nextDeadline: NOW + 3 * 60_000 } },
-      { count: 1, tone: 'warn', pulse: false, data: { prNumbers: [2], state: 'waiting' as const, nextDeadline: NOW + 40_000 } },
-    )
-    expect(both.data?.nextDeadline).toBe(NOW + 40_000)
-    // 剩不到一分钟：走"1分钟内到期"，不报 0 分钟。
-    expect(built.label!(both, { now: NOW, t: t as never })).toBe('2 等待评审（1分钟内到期） · #1, #2')
+  it('没有 label 时用兜底文案，且绝不读出来源 id', () => {
+    const noLabel = status({ facets: table(facet('dsh-hidden.internal-id', { count: 4, tone: 'warn', pulse: false })) })
+    const line = groupLiveLabel(noLabel, t, ALL_ON, NOW)
+    expect(line).toBe('4 需要关注')
+    expect(line).not.toContain('dsh-hidden')
   })
 })
 
