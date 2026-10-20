@@ -6,6 +6,16 @@
 
 ## 未发布
 
+- **upgrade** 依赖基线从 DSH `0.2.0-rc.2` 升到 `0.2.1-rc.2`：Cordis peer 改为 `~4.0.5`，Schemastery 与全部 `@deepseek-ai/dsh-*` 开发依赖升到对应版本；客户端 `dsh.client.inject` 加入 `@deepseek-ai/dsh-api-remote-access`。`tsc`、`tsdown`、27 个 Node 用例与 165 个 Vitest 用例全绿。
+- **feat** 同步上游 `dsh-client-ui-workspace 0.2.1-rc.2` 的会话行「复制 Session ID」菜单项（`order: 450`）和成功 / 失败全局提示；复制不打开会话、不 retain reference、不加载历史。
+- **feat** 同步上游 Workspace 权限面：注册并对外提供 keyed hook `useWorkspaceAccess(workspaceId, action)`，注入 `remoteAccess` 服务；fork 菜单项改由 `useSessionAccess(sessionId, 'session/fork')` 决定是否出现。
+- **feat** 同步上游 New Session 语义：`startSession` / `openWorkspace` / `connectWorkspace` 接受 `agentPreset`、`prompt` 与 `clearPreviousDraft`；启动恢复读取已保存空白会话日志记录的 preset，preset 失效时回退 Host 默认；添加工作区保留现有空白会话草稿。
+- **feat** 同步上游会话水位线：基础仍为 5 条非空白会话，但运行中、子智能体运行中、等待用户、未读完成、当前打开与搜索揭示的会话会自动抬高水位线；搜索揭示可超过 50 条上限，手动展开或收起按上游规则重置；水位线不写入 viewing store。
+- **refactor** 同步上游 Toast 架构：`workspace.toast` 按 notice kind 分派，共享 Factory 为 `workspace.toast.content`；归档动作、筛选动作与 fork 迁移提示回到各自业务注册项。旧 `WorkspaceBrowser` 内联 fork 错误条随之删除。
+- **feat** 同步上游 fork 迁移处理：会话行 fork 以 `allowMigration: false` 请求 Host；源会话需要迁移时提示「打开原会话」，用户确认只导航，不自动重试 fork。
+- **style** 同步上游侧栏弹层细节：Workspace / Session hover card 加入 `HoverCardGroup` 和 `grouped`，共享首张卡片的 800ms 停留计时；新建会话、置顶、归档、搜索恢复等按钮 Tooltip 经 body portal 绘制，避免被侧栏层叠上下文裁切。
+- **docs** README、升级手册与依赖表统一改为 DSH / 上游基线 `0.2.1-rc.2`；验证清单补复制 Session ID、权限 fork、水位线和共享 Toast 四项。
+
 ## 0.3.0 — 2026-10-20
 
 - **refactor** 删除过渡适配器 `src/client/legacy/`（5 个文件）、`package.json` 的两条 `dsh.client.external` 声明，以及只为它们存在的 5 个文案键（`status.waitingReview` / `...Overdue` / `...Imminent` / `...Left`、`status.scheduled`）。两家已各自注册同名 facet：dsh-gitea-dispatch 走其 PR #51（Issues #47），dsh-later 走其 PR #40（Issues #36）。
