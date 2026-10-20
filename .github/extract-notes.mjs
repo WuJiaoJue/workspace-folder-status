@@ -1,38 +1,39 @@
 #!/usr/bin/env node
 /**
  * 生成 GitHub Release 正文，**对齐 dsh-later 的写法**。骨架不是想象出来的，是从
- * dsh-later v1.3.0 / v1.4.0 两条已发布 Release 里提出来的：
+ * dsh-later v1.2.0 / v1.3.0 / v1.4.0 三条已发布 Release 里提出来的：
  *
- *   <package.json 的 description>            ← 一句话
- *   ## 安装                                  ← dsh plugin --profile web add <name> + 重启提示
+ *   <package.json 的 description>
+ *   ## 安装                     dsh plugin --profile web add <name> + 重启提示
  *   预构建产物随包发布，npm 安装无需本地构建或构建授权。
- *   ## 功能                                  ← 累积的全量能力清单
- *   ## 本版本变更
- *   ### feat / ### fix / ### refactor / …    ← 按 CHANGELOG 条目的 `**类型**` 前缀分组
- *   ## 说明                                  ← License / 仓库 / 完整更新日志 三条
+ *   ## 功能                     跨版本累积的全量能力清单
+ *   ## 本版本变更               ### feat / ### fix / ### refactor / …
+ *   ## 说明                     License / 仓库 / 完整更新日志 三条
  *
- * 关于「## 功能」的取舍（重要）：later 的功能清单是**随版本累积**的 —— 1.3.0 到 1.4.0
- * 只多了 `分组状态 facet`，一条都没删；而那条的文案与其 CHANGELOG 的 feat 条目几乎同句，
- * 说明它是人从本版 feat 搬上去的。本脚本如实复刻这个动作：
- *   README 的 `## 功能 / ## 特性一览 / ## Features` 小节 + 本版 CHANGELOG 的 feat 条目。
- * 它不替你改写措辞，也不发明能力；搬进去后请把清单并回 README，下次就不必重复追加
- * （脚本会往 stderr 打一条提醒，CI 里转成 ::notice）。
+ * 三条来自实测的规则：
  *
- * 支持三个仓库真实存在的 CHANGELOG 约定：
+ * 1. 「## 功能」优先取**上一条 Release 的同名小节** —— later 的清单就是这样单调累积的
+ *    （1.3.0 十条 → 1.4.0 十一条，一条没删），取不到才退回 README 的特性小节。
+ *    注意排除"本次这个版本自己"，否则重跑同一条 Release 会把自己的正文当历史累积。
+ * 2. 「## 本版本变更」的条数是**取舍**，不由脚本替你决定。约定：在版本小节里写
+ *    `### 发布摘要` 子节，脚本只用它、且不改写文字；没有该子节时全量收录并打告警。
+ *    参照：later 的 Release 是 3~7 条 / 2.2~2.5k 字，而其 CHANGELOG 条目本身是带嵌套
+ *    子条目的长论证 —— 说明 Release 是人工压过的。脚本按 `：` 或首句机械压缩会**压坏
+ *    句子**（实测把 `声明 \`pulse: true\`` 从代码段中间切开），所以这里不做任何改写。
+ * 3. 版本小节缺失时不许静默出空正文：默认打一条显式警告进正文，`--strict` 直接失败。
+ *
+ * 支持的 CHANGELOG 约定（三个仓库各一种）：
  *   ## 未发布           +  ## 1.3.0 — 2026-10-10      (dsh-later)
  *   ## [Unreleased]     +  ## [0.5.0] - 2026-10-10    (dsh-suggest-ghost)
  *   ## 未发布           +  ## 0.2.0-rc.2-fork1        (dsh-group-status，无日期)
  *
  * 用法：node .github/extract-notes.mjs <version> [--strict]
- *   --strict  找不到该版本小节就以退出码 2 失败（默认降级为可见占位，不让 CI 变红）
  */
 import fs from 'node:fs';
-import { execFileSync as $childExec } from 'node:child_process';
-const require$child = () => ({ execFileSync: $childExec });
+import { execFileSync } from 'node:child_process';
 
-const UNRELEASED_RE = /^##[ \t]+\[?(未发布|Unreleased|unreleased)\]?[ \t]*$/;
 const FEATURE_HEADINGS = ['## 功能', '## 特性一览', '## Features'];
-/** 分组顺序照 later：feat / fix 在前，其余按此表补，表外的类型排最后并按名字排序。 */
+/** 分组顺序照 later：feat / fix 在前，表外的类型排最后并按名字排序。 */
 const TYPE_ORDER = ['feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'chore', 'build', 'ci', 'style'];
 
 const [rawVer, ...flags] = process.argv.slice(2);
@@ -44,7 +45,7 @@ if (!ver) {
 
 /* ─────────── CHANGELOG 解析 ─────────── */
 
-/** 节 = 一行 `## xxx` 到下一条 `## xxx`。`###` 是节内小节，不能当边界。 */
+/** 节 = 一行 `## xxx` 到下一条 `## xxx`。`###` 是节内小节，不能当节边界。 */
 function sections(md) {
   const lines = md.split('\n');
   const heads = [];
@@ -68,11 +69,11 @@ function versionOf(title) {
   return m ? m[1] : null;
 }
 
-/** 把一节切成顶层条目（`- **type** 正文`，连带其后的缩进续行）。 */
-function items(sectionLines) {
+/** 把一段行切成顶层条目（`- …` 连带其后缩进续行；`###` 与空行不切断条目）。 */
+function items(lines) {
   const out = [];
   let cur = null;
-  for (const l of sectionLines) {
+  for (const l of lines) {
     if (/^- /.test(l)) {
       if (cur) out.push(cur.join('\n'));
       cur = [l];
@@ -92,7 +93,7 @@ const typeOf = (item) => {
   return m ? m[1].toLowerCase() : 'other';
 };
 
-/** 去掉 `- **feat** ` 前缀，其余文字一字不改。 */
+/** 只去掉 `- **feat** ` 这个类型前缀，其余文字一字不改。 */
 const stripType = (item) => item.replace(/^-\s+\*\*[a-zA-Z]+\*\*\s*/, '- ');
 
 /* ─────────── 素材 ─────────── */
@@ -116,34 +117,23 @@ if (sectionLines === null) {
     console.error(`CHANGELOG 里没有 ${ver} 小节 —— 发版要先跑：rel.mjs rename ${ver}`);
     process.exit(2);
   }
-  // 占位文字**不能**塞进 sectionLines：下面按 `^- ` 取条目会把它过滤掉，
-  // 于是正文只剩「本版无条目」，最该喊的地方反而不喊了。单独记一个标记。
+  // 占位文字**不能**塞进 sectionLines：下面按 `^- ` 取条目会把它过滤掉，正文就只剩
+  // 「本版无条目」—— 最该喊的地方反而不喊。单独记一个标记。
   missingSection = true;
   sectionLines = [];
 }
 
-/**
- * 「## 功能」的第一来源：**上一条 Release 正文里的同一小节**。
- * later 的清单就是这样累积的（1.3.0 的 10 条 → 1.4.0 加 1 条 = 11 条），照抄才能保持
- * 单调增长而不是每次退回 README 的那几条。取不到（首次发布 / 无 gh / 离线）就用 README。
- */
+/** 上一条 Release 的「## 功能」小节（排除本次自己，避免自我吞并）。 */
 function previousReleaseFeatures(currentVersion) {
+  const gh = (args) =>
+    execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 });
   try {
-    const { execFileSync } = require$child();
-    // 必须显式挑「不是本次这个版本」的那条：`gh release view` 不带参数取的是 latest，
-    // 而重新生成同一条 Release 时 latest 就是它自己 —— 不排掉就会把自己的正文当历史累积。
-    const list = execFileSync('gh', ['release', 'list', '--limit', '10', '--json', 'tagName'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const prev = JSON.parse(list)
-      .map((r) => String(r.tagName ?? '').replace(/^v/, ''))
-      .find((t) => t && t !== currentVersion);
+    const list = JSON.parse(gh(['release', 'list', '--limit', '10', '--json', 'tagName']));
+    const prev = list.map((r) => String(r.tagName ?? '').replace(/^v/, '')).find((t) => t && t !== currentVersion);
     if (!prev) return [];
-    const out = execFileSync('gh', ['release', 'view', 'v' + prev, '--json', 'body', '--jq', '.body'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const lines = out.split('\n');
-    const start = lines.findIndex((l) => /^## 功能\s*$/.test(l.trim()));
+    const body = gh(['release', 'view', 'v' + prev, '--json', 'body', '--jq', '.body']);
+    const lines = body.split('\n');
+    const start = lines.findIndex((l) => /^##\s+功能\s*$/.test(l.trim()));
     if (start < 0) return [];
     const res = [];
     for (let i = start + 1; i < lines.length; i++) {
@@ -152,11 +142,11 @@ function previousReleaseFeatures(currentVersion) {
     }
     return res;
   } catch {
-    return [];
+    return []; // 无 gh / 离线 / 无历史 Release：调用方退回 README
   }
 }
 
-/** README 的特性小节，返回条目原文（上一条 Release 取不到时的兜底）。 */
+/** README 的特性小节（上一条 Release 取不到时兜底）。 */
 function readmeFeatures() {
   for (const f of ['README.md', 'README.en.md']) {
     let text;
@@ -178,10 +168,31 @@ function readmeFeatures() {
   return [];
 }
 
-/* ─────────── 组装 ─────────── */
+/* ─────────── 本版本变更的取材 ─────────── */
 
-const changeItems = items(sectionLines).filter((t) => /^-\s/.test(t));
-const feats = changeItems.filter((t) => typeOf(t) === 'feat');
+let changeItems = items(sectionLines).filter((t) => /^-\s/.test(t));
+
+// `### 发布摘要` 子节是给人做的取舍：有就只用它，且不改写一个字。
+const summaryIdx = sectionLines.findIndex((l) => /^###\s+发布摘要\s*$/.test(l));
+if (summaryIdx >= 0) {
+  const block = [];
+  for (let i = summaryIdx + 1; i < sectionLines.length; i++) {
+    if (/^#{2,4}\s/.test(sectionLines[i])) break;
+    block.push(sectionLines[i]);
+  }
+  const picked = items(block).filter((t) => /^-\s/.test(t));
+  if (picked.length) {
+    changeItems = picked;
+    process.stderr.write(`· 「## 本版本变更」取自「### 发布摘要」子节：${picked.length} 条（未改写文字）。\n`);
+  }
+} else if (changeItems.length > 10) {
+  process.stderr.write(
+    `⚠ 没有「### 发布摘要」子节，Release 将收录全部 ${changeItems.length} 条 CHANGELOG 条目。\n` +
+      `  同组织参照：later 的 Release 是 3~7 条 / 2.2~2.5k 字。要压到那个密度，请在本版本小节\n` +
+      `  里加「### 发布摘要」并写入选要的条目 —— 脚本不替你删，也不改写句子（机械压缩实测会\n` +
+      '  把「声明 pulse: true」这类写法从代码段中间切开）。\n',
+  );
+}
 
 const groups = new Map();
 for (const it of changeItems) {
@@ -194,27 +205,27 @@ const orderedTypes = [
   ...[...groups.keys()].filter((t) => !TYPE_ORDER.includes(t)).sort(),
 ];
 
+/* ─────────── 功能清单 ─────────── */
+
+const fromPrev = previousReleaseFeatures(ver);
+const featureLines = fromPrev.length ? fromPrev : readmeFeatures();
+const featureSource = fromPrev.length ? '上一条 Release' : 'README 特性小节';
+const feats = items(sectionLines).filter((t) => /^-\s+\*\*feat\*\*/.test(t));
+if (feats.length) {
+  process.stderr.write(
+    `· 「## 功能」来源=${featureSource}，共 ${featureLines.length} 条。本版有 ${feats.length} 条 feat\n` +
+      `  尚未出现在功能清单里 —— 请把**面向使用者的说法**（不是 CHANGELOG 原句）并进 README 的\n` +
+      `  特性小节或上一条 Release，否则功能清单会一直落后。\n`,
+  );
+}
+
+/* ─────────── 组装 ─────────── */
+
 const repoUrl = (() => {
   const u = pkg.homepage || pkg.repository?.url || '';
   const m = /github\.com[:/]([^/]+)\/([^/.]+)/.exec(u);
   return m ? `https://github.com/${m[1]}/${m[2]}` : u;
 })();
-
-// 「## 功能」= 上一条 Release 的同一小节（保持 later 那种单调累积），取不到则退回 README。
-// **不自动追加本版 feat**：CHANGELOG 的 feat 条目是历史录制，措辞会随后续提交过时
-// （实测：本版 feat 里写着「恒胜过渡适配器」，而那个适配器已在同一次发布前被删除）。
-// 把能力并进 README 的特性小节是人的动作，脚本只负责把该做的事打出来。
-const fromPrev = previousReleaseFeatures(ver);
-const featureLines = fromPrev.length ? fromPrev : readmeFeatures();
-const featureSource = fromPrev.length ? '上一条 Release' : 'README 特性小节';
-if (feats.length) {
-  const pending = feats.map((f) => `      ${stripType(f).slice(0, 90)}`).join('\n');
-  process.stderr.write(
-    `· 「## 功能」来源=${featureSource}，共 ${featureLines.length} 条。\n` +
-      `· 本版有 ${feats.length} 条 feat 尚未出现在功能清单里 —— 请把**面向使用者的说法**（不是\n` +
-      `  CHANGELOG 的原句）并进 README 的特性小节或上一条 Release，否则功能清单会一直落后：\n${pending}\n`,
-  );
-}
 
 const block = [];
 if (pkg.description) block.push(pkg.description, '');
@@ -230,11 +241,12 @@ block.push(
   '',
   '## 功能',
   '',
-  featureLines.length ? featureLines.join('\n') : '- _(README 特性小节与上一条 Release 都取不到：请把功能清单补进 README 后重跑)_',
+  featureLines.length ? featureLines.join('\n') : '- _(README 特性小节与上一条 Release 都取不到：请补功能清单后重跑)_',
   '',
   '## 本版本变更',
   '',
 );
+
 if (missingSection) {
   block.push(
     `> ⚠️ **CHANGELOG 里没有 ${ver} 这一小节。** 正文因此不完整：把「未发布」小节改名为 ${ver}` +
