@@ -1,16 +1,23 @@
-# 由 release-infra 安装（2026-10-19）。只拦错，不碰发布。
-# 严格程度是实测出来的，不是猜的：
-#   - 本仓库 `npx tsc -p tsconfig.json --noEmit` 干净通过
-#   - `npm test` 本地 174 例 1.4s 全过，且不在仓库留下改动
-#   - 干净重建后 `lib/` 与提交产物**逐字节一致**（跨目录实测），所以漂移守卫无需任何排除。
-# 这条在 fix/build-css-identity 之前是做不到排除的：tsdown 的 CSS module 前缀由构建机
-# 绝对路径导出，lib/client.js 在任何别处重建都必然不同。构建器修好后排除项一并撤掉。
+# 只拦错，不碰发布。严格程度是实测出来的：
+#   - `npx tsc -p tsconfig.json --noEmit` 干净通过
+#   - `npm test` 165 例全过，且不在仓库留下改动
+#   - 干净重建后 `lib/` 与提交产物逐字节一致（跨目录实测）
+#
+# **双平台 + 零 marketplace action**（2026-10-20 重写）：
+#   Gitea 用的组织 runner 里，git 访问 github.com 是挂死的（`git ls-remote https://github.com/…`
+#   无响应，虽然 node fetch 能 200）。于是 `uses: actions/checkout@v4`、`pnpm/action-setup`
+#   这类 marketplace 动作会被 act 去 clone 而**永久挂起**（容器起来了、零日志、Gitea 侧一直
+#   queued）。同组织的 whq/apbot 一直用纯 shell `run:`，原因就在这里。所以本文件不再用
+#   任何 `uses:`，检出与 pnpm 都自己来；`runs-on` / `container` 用平台条件表达式分流：
+#     GitHub → 托管 runner + node:22 容器
+#     Gitea  → dsh-plugins 组织 runner（镜像自带 node 24，满足 engines.node `^22.19 || >=24`）
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,8 +28,8 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    container: node:22
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'dsh-runner' }}
+    container: ${{ github.server_url == 'https://github.com' && 'node:22' || '' }}
     env:
       # 版本线看守的判据来源（tests/version-line.node.test.mjs）：devDependencies 里的
       # 宿主包线必须等于它，且本包 manifest 必须通过宿主 evaluatePluginCompatibility。
@@ -30,33 +37,82 @@ jobs:
       # 宿主换代时改这一行 + devDependencies，两者不一致会红——这是有意的。
       DSH_RUNTIME_VERSION: "0.2.1-rc.2"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: 检出源码（不用 marketplace action）
+        shell: bash
+        env:
+          GH_SERVER: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_PR: ${{ github.event.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init -q .
+          git remote add origin "${GH_SERVER}/${GH_REPO}.git"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          fetch() { git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth=1 origin "$1"; }
+          if [ -n "${GH_PR:-}" ]; then
+            for r in "refs/pull/${GH_PR}/head" "refs/pull/${GH_PR}/merge"; do
+              fetch "$r" 2>/dev/null && break || true
+            done
+          fi
+          if ! git rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1; then
+            fetch "$GH_REF" 2>/dev/null || fetch "$GH_SHA"
+          fi
+          git checkout -q FETCH_HEAD
+          git log -1 --format='  检出 %h %s'
+
+      - name: 安装 pnpm（不用 marketplace action）
+        run: npm i -g pnpm@10
+
       - name: 安装依赖
         # 这里**不能**加 --ignore-scripts：tsdown 的原生二进制靠安装脚本落地
         run: pnpm install --frozen-lockfile
+
       - name: 类型检查
         run: npx tsc -p tsconfig.json --noEmit
+
       - name: 测试
         run: npm test
 
   # 只读守卫：不装依赖、不跑构建，永远不会改写工作区
   release-invariants:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'dsh-runner' }}
+    container: ${{ github.server_url == 'https://github.com' && 'node:22' || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: 检出源码（不用 marketplace action）
+        shell: bash
+        env:
+          GH_SERVER: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_PR: ${{ github.event.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init -q .
+          git remote add origin "${GH_SERVER}/${GH_REPO}.git"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          fetch() { git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth=1 origin "$1"; }
+          if [ -n "${GH_PR:-}" ]; then
+            for r in "refs/pull/${GH_PR}/head" "refs/pull/${GH_PR}/merge"; do
+              fetch "$r" 2>/dev/null && break || true
+            done
+          fi
+          if ! git rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1; then
+            fetch "$GH_REF" 2>/dev/null || fetch "$GH_SHA"
+          fi
+          git checkout -q FETCH_HEAD
+
       - name: repository.url 的 owner/repo 必须等于本仓库
         # 破了它，catalog 的 probe 判 false → 市场版本号/下载量消失
         run: |
           node -e "
             const p = require('./package.json');
             const url = p.repository?.url || '';
-            const want = process.env.GITHUB_REPOSITORY.toLowerCase();
+            const want = process.env.GH_REPO.toLowerCase();
             if (!url) { console.error('::error::缺 repository.url'); process.exit(1); }
             if (!url.toLowerCase().includes(want)) {
               console.error('::error::repository.url=' + url + ' 不含 ' + want);
@@ -64,7 +120,8 @@ jobs:
             }
           "
         env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_REPO: ${{ github.repository }}
+
       - name: prepare 钩子会破坏 --ignore-scripts 发布法
         run: |
           node -e "
@@ -74,6 +131,7 @@ jobs:
               process.exit(1);
             }
           "
+
       - name: 入口产物已被 git 跟踪
         run: |
           node -e "
@@ -85,6 +143,7 @@ jobs:
               process.exit(1);
             }
           "
+
       - name: CHANGELOG 有「未发布」节可写
         # 发版时要把它改名成版本节，否则 release notes 无源
         run: |
@@ -95,15 +154,42 @@ jobs:
 
   artifact-drift:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'dsh-runner' }}
+    container: ${{ github.server_url == 'https://github.com' && 'node:22' || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: 检出源码（不用 marketplace action）
+        shell: bash
+        env:
+          GH_SERVER: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_PR: ${{ github.event.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init -q .
+          git remote add origin "${GH_SERVER}/${GH_REPO}.git"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          fetch() { git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth=1 origin "$1"; }
+          if [ -n "${GH_PR:-}" ]; then
+            for r in "refs/pull/${GH_PR}/head" "refs/pull/${GH_PR}/merge"; do
+              fetch "$r" 2>/dev/null && break || true
+            done
+          fi
+          if ! git rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1; then
+            fetch "$GH_REF" 2>/dev/null || fetch "$GH_SHA"
+          fi
+          git checkout -q FETCH_HEAD
+
+      - name: 安装 pnpm（不用 marketplace action）
+        run: npm i -g pnpm@10
+
       - run: pnpm install --frozen-lockfile
+
       - name: 重新构建
         run: npm run build
+
       - name: lib/ 是否与提交一致
         run: |
           if ! git diff --quiet -- lib/; then
@@ -112,6 +198,7 @@ jobs:
             exit 1
           fi
           echo "✔ lib/ 与 src/ 逐字节一致"
+
       - name: 产物里不得含构建机绝对路径
         # 背景：已发布的 dsh-group-status@0.2.2 里 lib/client.js 有 5 处 /home/<user>/…
         # （dsh-later@1.4.0 与 dsh-suggest-ghost@0.5.1 均为 0 处）。根因在
@@ -125,6 +212,7 @@ jobs:
             exit 1
           fi
           echo "✔ 无绝对路径泄漏"
+
       - name: CSS module 前缀必须可复现
         # 类名前缀是 lightningcss 对**仓库相对**样式表路径取哈希得来的；若哪天又退回绝对路径，
         # 同一 commit 在不同目录会产出不同前缀。把整棵树搬到另一个路径再构建一次即可验证，
@@ -133,12 +221,12 @@ jobs:
           set -e
           copy=$(mktemp -d)/moved/deep
           mkdir -p "$(dirname "$copy")"
-          cp -a "$GITHUB_WORKSPACE" "$copy"
+          cp -a "$PWD/." "$copy"
           ( cd "$copy" && npm run build >/dev/null )
-          if diff -rq "$GITHUB_WORKSPACE/lib" "$copy/lib" >/dev/null; then
+          if diff -rq "$PWD/lib" "$copy/lib" >/dev/null; then
             echo "✔ 同一 commit 在两个不同目录构建，lib/ 逐字节一致"
           else
             echo "::error title=产物不可复现::换个目录构建就得到不同的 lib/ —— CSS 前缀大概又用上了绝对路径。"
-            diff -rq "$GITHUB_WORKSPACE/lib" "$copy/lib" | head -5
+            diff -rq "$PWD/lib" "$copy/lib" | head -5
             exit 1
           fi
