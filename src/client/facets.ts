@@ -95,7 +95,8 @@ export interface FacetRenderContext {
    * 侧栏行的翻译位（本插件的 `workspace` 命名空间）。
    *
    * ⚠️ 这是**便利项，不是义务**：provider 若有自己的 locale 命名空间，应当闭包自己
-   * 的翻译函数、忽略这里。过渡期的内置适配器复用本插件的行文案，所以由这里传入。
+   * 的翻译函数、忽略这里。这个字段是为**代管方**（`origin: 'legacy'`）复用本插件的行
+   * 文案而存在的；内置适配器已删除（迁移史见 `docs/facet-protocol.md`），字段保留给下一次代管。
    */
   t: (key: string, options?: Record<string, string | number>) => string
 }
@@ -170,7 +171,7 @@ export interface GroupStatusFacet<Input = unknown, Data = unknown> {
   origin?: FacetOrigin
 }
 
-/** 协议来源：`provider` = 状态所有者自己注册；`legacy` = 本插件内置的过渡适配器。 */
+/** 协议来源：`provider` = 状态所有者自己注册；`legacy` = 替状态所有者代管的注册方（本插件目前不代管任何来源）。 */
 export type FacetOrigin = 'provider' | 'legacy'
 
 /**

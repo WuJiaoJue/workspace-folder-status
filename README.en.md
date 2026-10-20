@@ -109,7 +109,7 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 - Icon and wording belong to the owner (`renderIcon` / `label`): what a state looks like, and whether a lapsed wait should sit still or pulse, is its knowledge. Previously this plugin inferred it from state names and ended up contradicting the owner, which draws `overdue` **statically** while the badge pulsed.
 - A collapsed parent spans the whole subtree, so same-facet folds get merged again. That is why `fold` returns structured `data` rather than text: text cannot be merged. Without `merge` the default rule applies (counts add, the more urgent tone wins, `data` is dropped).
 - When this plugin is absent or disabled `require` throws: catch it and carry on, your own features are unaffected.
-- Same-id conflicts are settled **by origin, not by registration order** (the host does not order plugin `apply`): the owner always wins over a transitional adapter.
+- Same-id conflicts are settled **by origin, not by registration order** (the host does not order plugin `apply`): the owner always wins over a custodial (`legacy`) registrant.
 
 ### Why `subscribe` / `getSnapshot` instead of a React hook
 
