@@ -64,7 +64,12 @@ jobs:
           git log -1 --format='  检出 %h %s'
 
       - name: 安装 pnpm（不用 marketplace action）
-        run: npm i -g pnpm@10
+        # 容器里的 global 目录不可写（实测 npm i -g 报权限错），装到工作区内前缀再加 PATH
+        run: |
+          set -eu
+          npm i -g pnpm@10 --prefix "$PWD/.toolchain" --silent
+          echo "$PWD/.toolchain/bin" >> "$GITHUB_PATH"
+          "$PWD/.toolchain/bin/pnpm" --version
 
       - name: 安装依赖
         # 这里**不能**加 --ignore-scripts：tsdown 的原生二进制靠安装脚本落地
@@ -107,20 +112,25 @@ jobs:
           git checkout -q FETCH_HEAD
 
       - name: repository.url 的 owner/repo 必须等于本仓库
-        # 破了它，catalog 的 probe 判 false → 市场版本号/下载量消失
+        # 破了它，catalog 的 probe 判 false → 市场版本号/下载量消失。
+        # 注意：**不能**拿 github.repository 比 —— 本仓库在 Gitea 上是 dsh-plugins/<repo>，
+        # 在 GitHub 上是 dsh-plugin-collection/<repo>，而 repository.url 必须始终指向
+        # catalog 认的那个 GitHub 组织。所以比的是「预期组织 + 本仓库名」。
         run: |
           node -e "
-            const p = require('./package.json');
-            const url = p.repository?.url || '';
-            const want = process.env.GH_REPO.toLowerCase();
+            const name = String(process.env.GH_REPO).split('/')[1];
+            const want = (process.env.EXPECTED_GH_OWNER + '/' + name).toLowerCase();
+            const url = require('./package.json').repository?.url || '';
             if (!url) { console.error('::error::缺 repository.url'); process.exit(1); }
             if (!url.toLowerCase().includes(want)) {
-              console.error('::error::repository.url=' + url + ' 不含 ' + want);
+              console.error('::error::repository.url=' + url + ' 不含 ' + want + '（catalog 会判不关联）');
               process.exit(1);
             }
+            console.log('✔ repository.url 指向 ' + want);
           "
         env:
           GH_REPO: ${{ github.repository }}
+          EXPECTED_GH_OWNER: dsh-plugin-collection
 
       - name: prepare 钩子会破坏 --ignore-scripts 发布法
         run: |
@@ -183,7 +193,12 @@ jobs:
           git checkout -q FETCH_HEAD
 
       - name: 安装 pnpm（不用 marketplace action）
-        run: npm i -g pnpm@10
+        # 容器里的 global 目录不可写（实测 npm i -g 报权限错），装到工作区内前缀再加 PATH
+        run: |
+          set -eu
+          npm i -g pnpm@10 --prefix "$PWD/.toolchain" --silent
+          echo "$PWD/.toolchain/bin" >> "$GITHUB_PATH"
+          "$PWD/.toolchain/bin/pnpm" --version
 
       - run: pnpm install --frozen-lockfile
 
