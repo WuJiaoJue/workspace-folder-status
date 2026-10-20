@@ -179,8 +179,19 @@ function previousReleaseFeatures(currentVersion) {
   const gh = (args) =>
     execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 });
   try {
-    const list = JSON.parse(gh(['release', 'list', '--limit', '10', '--json', 'tagName']));
-    const prev = list.map((r) => String(r.tagName ?? '').replace(/^v/, '')).find((t) => t && t !== currentVersion);
+    // 取历史 tag 用 API 而不是 `gh release list --json`：本机这版 gh 的 release list
+    // 不支持 --json，会抛错 → 被 catch 吞掉 → 静默退化到 README 的特性小节（少继承几条）。
+    // 实测后果：dsh-later 1.5.0 第一次生成时功能清单只有 8 条，而 v1.4.0 那条有 11 条。
+    let tags;
+    try {
+      tags = JSON.parse(gh(['api', 'repos/{owner}/{repo}/releases?per_page=20', '--jq',
+        '[.[].tag_name]'])).map(String);
+    } catch {
+      tags = gh(['release', 'list', '--limit', '20']).split('\n')
+        .map((l) => (l.match(/^\S+\s+\S*\s*(v[0-9][^\s]*)/) ?? [])[1])
+        .filter(Boolean);
+    }
+    const prev = tags.map((t) => String(t).replace(/^v/, '')).find((t) => t && t !== currentVersion);
     if (!prev) return [];
     const body = gh(['release', 'view', 'v' + prev, '--json', 'body', '--jq', '.body']);
     const lines = body.split('\n');
@@ -192,8 +203,9 @@ function previousReleaseFeatures(currentVersion) {
       if (/^- /.test(lines[i])) res.push(lines[i]);
     }
     return res;
-  } catch {
-    return []; // 无 gh / 离线 / 无历史 Release：调用方退回 README
+  } catch (e) {
+    process.stderr.write(`· 取不到上一条 Release 的功能清单（${String(e.message).split('\n')[0]}），退化到 README\n`);
+    return [];
   }
 }
 
