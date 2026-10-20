@@ -66,6 +66,25 @@ test('发布产物 lib/index.js 里的 Config 带着全部字段', () => {
   }
 })
 
+test('包依赖与 DSH 0.2.1-rc.2 基线一致', () => {
+  const pkg = JSON.parse(read('package.json'))
+  assert.equal(pkg.peerDependencies['@deepseek-ai/cordis'], '~4.0.5')
+  assert.equal(pkg.dependencies['@deepseek-ai/schemastery'], '~3.18.5')
+  assert.equal(pkg.devDependencies['@deepseek-ai/cordis'], '~4.0.5')
+  assert.equal(pkg.devDependencies['@deepseek-ai/schemastery'], '~3.18.5')
+
+  for (const [name, version] of Object.entries(pkg.devDependencies ?? {})) {
+    if (name.startsWith('@deepseek-ai/dsh-')) {
+      assert.equal(version, '0.2.1-rc.2', `${name} 未对齐 DSH 0.2.1-rc.2`)
+    }
+  }
+
+  assert.ok(
+    pkg.dsh?.client?.inject?.includes('@deepseek-ai/dsh-api-remote-access'),
+    '客户端注入缺少 remote-access：上游 0.2.1 的 Workspace access hook 无法声明依赖',
+  )
+})
+
 test('每个实现源文件都有对应的 lib/types 产物', () => {
   /** 递归收集 `src/` 下的实现文件（`.ts`/`.tsx`）。手写 `.d.ts` 不产 `.js`，跳过。 */
   const walk = (dir) => {

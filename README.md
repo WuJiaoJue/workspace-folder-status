@@ -6,9 +6,9 @@
 
 **中文** | [English](./README.en.md)
 
-[![version](https://img.shields.io/badge/version-0.2.0-0EA5E9)](https://github.com/dsh-plugin-collection/dsh-group-status)
+[![version](https://img.shields.io/badge/version-0.3.0-0EA5E9)](https://github.com/dsh-plugin-collection/dsh-group-status)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.0--rc.2-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.1--rc.2-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 </div>
 
@@ -180,9 +180,9 @@ dsh plugin --profile web remove dsh-group-status
 
 | 项 | 值 |
 |---|---|
-| DSH 内核 | `0.2.0-rc.2` |
-| peer 依赖 | `@deepseek-ai/cordis ~4.0.4` |
-| 上游基线 | `@deepseek-ai/dsh-client-ui-workspace 0.2.0-rc.2`（源码已 vendored 进本仓库 `src/`）|
+| DSH 内核 | `0.2.1-rc.2` |
+| peer 依赖 | `@deepseek-ai/cordis ~4.0.5` |
+| 上游基线 | `@deepseek-ai/dsh-client-ui-workspace 0.2.1-rc.2`（源码已 vendored 进本仓库 `src/`）|
 | 安装形态 | fork 覆盖包：同槽位注册 + `cordis.patch.yml` 禁用官方行 |
 | 可选搭档 | dsh-later（定时任务摘要）、dsh-gitea-dispatch（等待评审摘要）|
 
@@ -196,7 +196,7 @@ dsh plugin --profile web remove dsh-group-status
 pnpm install
 pnpm build        # tsc 类型检查 + tsdown 打包 → lib/
 pnpm watch        # 监听 src/ 自动重建（改完仍需重启 dsh web，侧栏是整包替换）
-pnpm test         # = test:node（node --test，12 用例）+ test:spec（vitest + jsdom，96 用例）
+pnpm test         # = test:node（node --test，27 用例）+ test:spec（vitest + jsdom，165 用例）
 pnpm test:spec    # 只跑上游 spec 套件
 ```
 
