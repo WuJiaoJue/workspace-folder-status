@@ -92,7 +92,7 @@
 
 折叠分组徽标可以显示**别的插件**的状态。方向是反的：**状态所有者把自己的事实注册进来**，本插件的聚合与渲染路径**不认识任何具体来源**（无一处按来源写分支）。完整契约见 [docs/facet-protocol.md](docs/facet-protocol.md)。
 
-两处尚未收口的例外，都是过渡期的：`legacy/` 目录仍为 dsh-later 与 dsh-gitea-dispatch 各代管一个适配器（对方自注册同名 facet 后按 `FACET_ORIGIN_RANK` 自动让位，随即删除）；这两个来源各有一个专用设置项，加**第三个**独立开关仍需改本插件 14 个改动点（成本与收口方案见该文档的「已知取舍」）。
+一处尚未收口的例外：现有的两个来源各有一个专用设置项，加**第三个**独立开关仍需改本插件 14 个改动点（成本与收口方案见该文档的「已知取舍」）。过渡期代管已经收口：`legacy/` 目录连同两条 `dsh.client.external` 声明已删除，dsh-later 与 dsh-gitea-dispatch 各自注册自己的 facet。
 
 ```js
 const gs = require('dsh-group-status/client')
@@ -117,14 +117,14 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 
 徽标是 React 组件，而 hook 调用序列必须逐次渲染恒定。facet 是运行时注册 / 注销的：逐个调提供方的 hook，注册面一变 hook 数量就变，React 直接抛 "Rendered more hooks than during the previous render"。本插件只订阅一次、只读一个版本号，背后挂多少个来源都与 hook 数量无关。
 
-### 过渡期：本插件目前代管的两家
+### 现有接入方
 
-| facet id | 现状 | 提供方要做的 |
-|---|---|---|
-| `dsh-gitea-dispatch.waiting-review` | 本插件读 `dsh-gitea-dispatch/client` 的摘要 store 代为登记 | 自己注册同 id facet |
-| `dsh-later.schedule` | 本插件读 `dsh-later/client` 的摘要 store 代为登记 | 自己注册同 id facet |
+| facet id | 归属 |
+|---|---|
+| `dsh-gitea-dispatch.waiting-review` | dsh-gitea-dispatch 自己注册（其 Issues #47） |
+| `dsh-later.schedule` | dsh-later 自己注册（其 Issues #36） |
 
-两家各自接入后，删除 [`src/client/legacy/`](src/client/legacy) 整个目录与 `package.json` 里对应的两条 `dsh.client.external` 声明即可。在那之前这条路径一直有效，两家不接入也不会坏。
+本插件不再为这两家持有任何字段类型、色档映射或文案。要加第三个来源，照下面的契约注册即可，本仓库无需改动（除非还要一个独立开关）。
 
 > ⚠️ 跨插件**值导入**在本项目走不通（实测 `Could not resolve "dsh-group-status"`：客户端 bundle 是自包含的闭包工厂），所以提供方只认 `require('dsh-group-status/client')` 拿到的运行时符号，不 `import` 本包的类型。协议形状见文档，抄一份结构声明即可。
 ---

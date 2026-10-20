@@ -116,8 +116,8 @@ true` 不会让你的图标跟着呼吸，你声明 `pulse: false` 也不会因�
 
 | 已登记 | 新来的 | 结果 |
 |---|---|---|
-| 你的（`provider`，缺省） | 本插件的过渡适配器（`legacy`） | 适配器被拒，不覆盖你 |
-| 本插件的过渡适配器 | 你的 | 你覆盖它 |
+| 你的（`provider`，缺省） | 代管者（`legacy`） | 代管被拒，不覆盖你 |
+| 代管者（`legacy`） | 你的 | 你覆盖它 |
 | 同来源重复登记 | 同来源 | 直接覆盖（热替换不必先注销） |
 
 `origin` 字段你**不用填**，缺省即 `provider`。过渡适配器会显式写 `'legacy'`。
@@ -140,18 +140,33 @@ true` 不会让你的图标跟着呼吸，你声明 `pulse: false` 也不会因�
 - 加**可选**成员、加新的 `tone` 取值：不升版本。
 - 改必填成员、改任何成员的语义：升版本，并在本文变更记录里写明迁移步骤。
 
-## 过渡期现状
+## 迁移史：`legacy/` 已删除
 
-本插件目前**代管**两家已经存在的能力，注册在
-[`src/client/legacy/`](../src/client/legacy) 下，都标了 `origin: 'legacy'`：
+本插件一度为两家代管（`origin: 'legacy'` 的过渡适配器）。两家已各自注册同名 facet，
+代管目录与 `package.json` 里对应的两条 `dsh.client.external` 声明随后删除：
 
-| facet id | 现状 | 接管动作 |
+| facet id | 归属 | 接入位置 |
 |---|---|---|
-| `dsh-gitea-dispatch.waiting-review` | 本插件读 `require('dsh-gitea-dispatch/client')` 的摘要 store | dsh-gitea-dispatch 自己注册同 id facet |
-| `dsh-later.schedule` | 本插件读 `require('dsh-later/client')` 的摘要 store | dsh-later 自己注册同 id facet |
+| `dsh-gitea-dispatch.waiting-review` | dsh-gitea-dispatch | `client/group-status-facet.js`（其 Issues #47 / PR #51） |
+| `dsh-later.schedule` | dsh-later | `src/client/group-status-facet.ts`（其 Issues #36 / PR #40） |
 
-两家各自接入后，本插件删除整个 `legacy/` 目录与 `package.json` 里对应的
-`dsh.client.external` 两条声明。删之前这条路径一直有效，两家不接入也不会坏。
+保留 `FacetOrigin` / `FACET_ORIGIN_RANK` 不是为已经删掉的代管留兼容：它是**任何一次迁移**
+的安全网。下次再需要临时代管某个来源时，注册方与所有者仍不必协商发布顺序。
+
+### 提供方必读：`require` 只能是注入的那一个
+
+宿主给闭包工厂注入 `require`（`window.__ModuleLoader__.load({ factory: (require) => ... })`），
+但**没有全局 `require`**（实测 `typeof globalThis.require === 'undefined'`）。用全局写法不会
+报错，只会拿到 `undefined`，于是整条跨插件集成「看起来装着、其实一直没工作」。必须用工厂
+注入的那个，并且 `try` / `?.` 兜住对端缺席。
+
+### 提供方必读：`protocol` 要比对，不要回声
+
+版本常量填**你自己实现的那个**，并在登记前比对对端声明的版本；不一致就留一条可见日志并
+放弃登记。把对端的数字原样抄进 `protocol` 看似更聪明（「对方说几就是几」），实际会关掉
+版本闸门的唯一作用：将来对端升到 v2 且改了某个既有成员的语义时，你这份 v1 形状的 facet
+会声称自己是 v2 并被接受，徽标从此按错的语义渲染，而且没有任何一处会报错。沉默的等价
+正是这份文档反复要消灭的那类失败。
 
 ## 已知取舍
 

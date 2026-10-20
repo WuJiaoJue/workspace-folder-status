@@ -6,6 +6,11 @@
 
 ## 未发布
 
+- **refactor** 删除过渡适配器 `src/client/legacy/`（5 个文件）、`package.json` 的两条 `dsh.client.external` 声明，以及只为它们存在的 5 个文案键（`status.waitingReview` / `...Overdue` / `...Imminent` / `...Left`、`status.scheduled`）。两家已各自注册同名 facet：dsh-gitea-dispatch 走其 PR #51（Issues #47），dsh-later 走其 PR #40（Issues #36）。
+- **refactor** `visibleFacets` 从 `legacy/store-source.ts` 移到 `src/client/facet-visibility.ts`：它是徽标自己的可见性规则，不是某个来源的适配。移进 `legacy/` 只是当初为了让它能被测试，现在它本来就该在核心侧。
+- **test** 核心用例不再引真实适配器，改用测试自己声明的合成来源。**这是一次所有权校正，不是减少覆盖**：用真实适配器测聚合，等于把「本插件不认识任何来源」这条断言悄悄写成「认识两个」。文案用例改为断言「来源交出的句子逐字呈现、无 label 时兜底且绝不读出来源 id」。删除 `tests/legacy-bridge.client.spec.ts`（被测对象已不存在）；其"store 迟到"与"设置过滤"两条不变量分别由 `tests/facets.node.test.mjs`（登记面语义）与 `tests/badge-labels.client.spec.ts`（过滤后不残留）继续覆盖。
+- **docs** `facet-protocol.md` 的过渡一节改写为迁移史，并补两条提供方必读：`require` 只能用工厂注入的那个（全局 `require` 缺席且静默失败）；`protocol` 必须**比对**而不是回声对端版本（回声会关掉版本闸门，使 v1 形状的 facet 能声称 v2 并被接受，之后按错的语义静默渲染）。
+
 ### 由 dsh-gitea-dispatch 提出的四个问题（#22 / #23 / #24 / #25）
 
 - **fix** 脉冲作用在**整只**徽标上，同组里任何一家声明 `pulse: true` 就让别家本该静止的图标跟着呼吸（Issues #22）。此前只把**判据**交出去了（`fold.pulse`），**作用对象**仍留在徽标容器上，于是 `pulse: false` 是否生效取决于同组里恰好有没有别人开闪——「等待评审超时不闪」这条承诺（README 与 `badge-labels.ts` 注释都写着）会悄悄失效，而提供方无从发现：它交出了 `pulse: false`、自己的 CSS 里零 `animation`，失效完全发生在本仓库的容器 class 上。现在判据与作用对象一起下沉到**声明它的那个元素**（`facetPulseClass` 取代 `groupBadgeIsUrgent`），计数数字与宿主会话状态点任何时候都不再继承来源的紧急程度。`docs/facet-protocol.md` 同步改写 `pulse` 的语义。
