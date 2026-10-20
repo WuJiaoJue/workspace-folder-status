@@ -34,7 +34,8 @@ jobs:
     name: 发布
     if: vars.RELEASE_AUTOMATION == 'true' || github.event_name == 'workflow_dispatch'
     environment: release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'dsh-runner' }}
+    container: ${{ github.server_url == 'https://github.com' && 'node:22' || '' }}
     steps:
       # 解析目标 tag：push 事件用 ref_name；dispatch 用输入。后面所有步骤都以它为准，
       # 避免出现"跑在分支上却按分支的 package.json 发版"这种错位。
@@ -55,9 +56,22 @@ jobs:
           echo "version=${T#v}" >> "$GITHUB_OUTPUT"
           echo "目标 tag：$T（版本 ${T#v}）"
 
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.target.outputs.tag }}
+      - name: 检出目标 tag（不用 marketplace action）
+        # Gitea runner 里 git 访问 github.com 会挂死，marketplace 动作一律用不了
+        shell: bash
+        env:
+          GH_SERVER: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.target.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init -q .
+          git remote add origin "${GH_SERVER}/${GH_REPO}.git"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth=1 origin "refs/tags/${TAG}"
+          git checkout -q FETCH_HEAD
+          git log -1 --format='  检出 %h %s'
 
       # trusted publishing 要求 npm CLI ≥ 11.5.1；node 22 自带 10.x，不升级会直接认证失败
       - name: npm CLI ≥ 11.5.1
