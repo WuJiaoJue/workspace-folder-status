@@ -6,6 +6,26 @@
 
 ## 未发布
 
+- **fix** 提供方**晚于首渲染**注册的状态源永远进不了折叠徽标：`WorkspaceBrowser` 订阅了
+  facet 存储，却把 `useSyncExternalStore` 的返回值丢掉，`useMemo` 的依赖里只有设置项——
+  于是登记面变化只换来一次重渲染，渲染算的仍是**上一次**的登记面。表现是「徽标少一家、
+  无任何报错、刷新页面就好了」，而刷新只是碰巧让注册赶在了首渲染之前。宿主不保证插件
+  `apply` 与侧栏挂载的先后，所以这条按加载时序随机命中。修法是把订阅 + 读表 + 按设置筛
+  收进 `use-visible-facets.ts` 一个 hook，让"只用信号、不用值"在结构上写不出来。这条接缝
+  此前测不到（能渲染整条路径的 `tests/workspace-browser.client.spec.tsx` 在本仓库是跳过的），
+  新增 `tests/use-visible-facets.client.spec.tsx` 5 例覆盖，并用变异测试验过非空洞性：把依赖
+  里的版本号拿掉，「晚到的注册」与「晚到的注销」两条会红。
+- **fix** 登记面从**模块级**单例改为挂在 `globalThis` 上的**进程级**共享表。宿主热替换只
+  换代被替换的那个模块（`dsh-client-modules` 的 `invalidate()` 不级联到依赖方，也不重跑
+  别人的 `apply`），于是本插件一旦被换成新实例就持有一张**空表**：提供方那一次性登记留在
+  被丢弃的旧表上，徽标从此少一家，且只有刷新页面才好。开发环境用 `link:` 装插件、反复
+  重建 `lib/`，这条几乎必然发生。现在换代只是"再拿一次同一张表"；`registerGroupStatusFacet`
+  也改为**现取**当前那张表，而不是用模块加载时抄下的引用。那把全局键同时是现场诊断入口：
+  `globalThis.__dshGroupStatusFacetRegistry__.list()` 一眼看出注册到底落没落，判据写进
+  `docs/facet-protocol.md` 新增的「登记面的生命周期」一节。
+- **test** `tests/facets.node.test.mjs` 补 3 例：共享表重复取不新建、模块级 `registry` 常量
+  就是那张共享表、换代后新注册只落新表不落被丢弃的旧表。
+
 ## 0.4.0 — 2026-10-20
 
 - **upgrade** 依赖基线从 DSH `0.2.0-rc.2` 升到 `0.2.1-rc.2`：Cordis peer 改为 `~4.0.5`，Schemastery 与全部 `@deepseek-ai/dsh-*` 开发依赖升到对应版本；客户端 `dsh.client.inject` 加入 `@deepseek-ai/dsh-api-remote-access`。`tsc`、`tsdown`、27 个 Node 用例与 165 个 Vitest 用例全绿。
