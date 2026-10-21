@@ -199,3 +199,54 @@ test('#25③：坏 provider 交出非法色档时，合法那一档仍必胜，�
     BOGUS,
   )
 })
+
+// ── 跨模块实例的登记面 ────────────────────────────────────────────────────────
+//
+// 提供方只在自己的 apply 里登记一次；宿主热替换（HMR / reload(id, rev)）**只换代被替换
+// 的那个模块**，不级联到"谁 require 过它"。所以登记面若是模块级单例，本插件被换成新
+// 实例的那一刻起就是一张空表：提供方那份注册留在被丢弃的旧表上，徽标从此少一家，且
+// 只有刷新页面才好。下面三条钉住"表挂在全局、注册现取当前那张表"。
+
+const REGISTRY_KEY = '__dshGroupStatusFacetRegistry__'
+
+test('sharedFacetRegistry 是同一张表：重复取不新建、登记跨取用存活', async () => {
+  const { sharedFacetRegistry } = await import('../lib/types/client/facets.js')
+  const first = sharedFacetRegistry()
+  assert.equal(sharedFacetRegistry(), first, '第二次必须拿回同一张表，而不是又建一张')
+  // 这张表是全模块共享的：登记完必须摘掉，否则污染后面的用例。
+  first.register(facet('x.shared'))
+  try {
+    assert.deepEqual(sharedFacetRegistry().list().map(entry => entry.facet.id), ['x.shared'])
+  } finally {
+    first.remove('x.shared')
+  }
+})
+
+test('模块级 registry 常量就是那张共享表', async () => {
+  const { registry, sharedFacetRegistry } = await import('../lib/types/client/facets.js')
+  assert.equal(registry, sharedFacetRegistry(), '常量与全局表必须是同一对象，否则两边各折一份')
+})
+
+test('registerGroupStatusFacet 现取当前那张表：换代后新注册落在新表上，不写进被丢弃的旧表', async () => {
+  const { registerGroupStatusFacet, sharedFacetRegistry } = await import('../lib/types/client/facets.js')
+  const host = globalThis
+  const oldTable = sharedFacetRegistry()
+  const previous = host[REGISTRY_KEY]
+  // 模拟"本插件被换成新实例"：全局表换掉，旧表上留着一家注册。
+  const replacement = createFacetRegistry()
+  oldTable.register(facet('x.old'))
+  host[REGISTRY_KEY] = replacement
+  let unregister
+  try {
+    unregister = registerGroupStatusFacet(facet('x.new'))
+    assert.deepEqual(replacement.list().map(entry => entry.facet.id), ['x.new'],
+      '新注册必须进当前活着的那张表')
+    assert.equal(oldTable.list().some(entry => entry.facet.id === 'x.new'), false,
+      '旧表不该再收到新注册（它已经没有渲染方在读）')
+  } finally {
+    unregister?.()
+    oldTable.remove('x.old')
+    if (previous === undefined) delete host[REGISTRY_KEY]
+    else host[REGISTRY_KEY] = previous
+  }
+})

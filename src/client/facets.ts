@@ -391,12 +391,59 @@ export function createFacetRegistry(): FacetRegistry {
 }
 
 /**
- * 生产用的模块级单例登记表面。
+ * 挂在 `globalThis` 上的登记表面的键名。
+ *
+ * 它同时是**现场诊断入口**：宿主里可以直接
+ * `globalThis.__dshGroupStatusFacetRegistry__.list().map(e => e.facet.id)` 读出"此刻到底
+ * 有哪些状态源登记上了"——「我注册了为什么没显示」不该只能靠猜（协议文档点名的那类
+ * 不可诊断失败）。
+ */
+const SHARED_REGISTRY_KEY = '__dshGroupStatusFacetRegistry__'
+
+/** 只声明这一把键的宿主对象面（`globalThis` 上别人家的键与本模块无关）。 */
+interface SharedRegistryHost {
+  [SHARED_REGISTRY_KEY]?: FacetRegistry
+}
+
+/**
+ * 取（并首次创建）**进程级**共享的登记表面。
+ *
+ * ## 为什么不能是模块级
+ *
+ * 提供方把 facet 注册进来是一次性的：它在自己的 `apply` 里 `require` 本插件的 client
+ * 入口、登记完就把注销函数挂在 effect 上。而宿主的热替换（HMR、`reload(id, rev)`）
+ * **只换代被替换的那个模块**——`dsh-client-modules` 的 `invalidate()` 只删自己那一行的
+ * factory 与 loadCache，不级联到"谁 require 过它"（依赖方不会重跑 apply）。
+ *
+ * 于是模块级单例在这里必然失效：本插件被换成新实例 → 新实例建一张**空表** → 提供方
+ * 那份注册留在被丢弃的旧表上 → 徽标从此少一家，且**只有刷新页面才好**。开发环境天天
+ * 重建 `lib/`，这条几乎必然发生。
+ *
+ * 挂到 `globalThis` 上之后，换代只是"再拿一次同一张表"：注册跨换代存活，`facetStore()`
+ * 在新实例里 `rewire()` 时照样订阅到那些来源。提供方被换代时按同 id 覆盖登记（见
+ * {@link FacetRegistry.register} 的来源决胜），不会重复计数。
+ *
+ * @returns 全进程唯一的登记表面。
+ */
+export function sharedFacetRegistry(): FacetRegistry {
+  const host = globalThis as typeof globalThis & SharedRegistryHost
+  const existing = host[SHARED_REGISTRY_KEY]
+  if (existing !== undefined) return existing
+  const created = createFacetRegistry()
+  host[SHARED_REGISTRY_KEY] = created
+  return created
+}
+
+/**
+ * 生产用的单例登记表面。
  *
  * 与 {@link createFacetRegistry} 分开，是为了让测试能对着一张干净的表断言协议行为，
  * 而不会被别的用例或别的插件登记的 facet 污染。
+ *
+ * ⚠️ 它只是 {@link sharedFacetRegistry} 在**本模块首次加载时**取到的那份引用；跨模块实例
+ * 存活的是 globalThis 上那一张，所以运行期一律经 {@link sharedFacetRegistry} 现取。
  */
-export const registry: FacetRegistry = createFacetRegistry()
+export const registry: FacetRegistry = sharedFacetRegistry()
 
 /**
  * 本插件 client 入口对外的登记函数（provider 侧唯一需要认识的符号）。
@@ -406,7 +453,10 @@ export const registry: FacetRegistry = createFacetRegistry()
  *   返回值形状保持稳定，provider 的 dispose 路径不必区分成败。
  */
 export function registerGroupStatusFacet(facet: AnyFacet): Unregister {
-  const result = registry.register(facet)
+  // 现取共享表，而不是用模块加载时那份引用：`globalThis` 上的表被换掉（测试清场、
+  // 或未来支持热切换实现）之后，新注册必须落到**当前活着**的那张表上。
+  const target = sharedFacetRegistry()
+  const result = target.register(facet)
   if (!result.ok) {
     // 过渡期适配器被状态所有者顶掉是**预期结果**，不是错误：报一条 warn 会让人以为
     // 徽标坏了。除此之外的每一次失败都必须可见，否则"注册了却没显示"无从诊断。
@@ -415,7 +465,7 @@ export function registerGroupStatusFacet(facet: AnyFacet): Unregister {
   }
   // 只摘"还是自己"的那一份：同 id 已被后来的实现替换时，旧 dispose 不该动新登记。
   return () => {
-    registry.remove(result.id, facet)
+    target.remove(result.id, facet)
   }
 }
 

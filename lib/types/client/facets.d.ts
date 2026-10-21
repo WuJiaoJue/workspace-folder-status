@@ -248,10 +248,34 @@ export interface FacetRegistry {
 /** 创建一张登记表面（测试用；生产走模块级单例 {@link registry}）。 */
 export declare function createFacetRegistry(): FacetRegistry;
 /**
- * 生产用的模块级单例登记表面。
+ * 取（并首次创建）**进程级**共享的登记表面。
+ *
+ * ## 为什么不能是模块级
+ *
+ * 提供方把 facet 注册进来是一次性的：它在自己的 `apply` 里 `require` 本插件的 client
+ * 入口、登记完就把注销函数挂在 effect 上。而宿主的热替换（HMR、`reload(id, rev)`）
+ * **只换代被替换的那个模块**——`dsh-client-modules` 的 `invalidate()` 只删自己那一行的
+ * factory 与 loadCache，不级联到"谁 require 过它"（依赖方不会重跑 apply）。
+ *
+ * 于是模块级单例在这里必然失效：本插件被换成新实例 → 新实例建一张**空表** → 提供方
+ * 那份注册留在被丢弃的旧表上 → 徽标从此少一家，且**只有刷新页面才好**。开发环境天天
+ * 重建 `lib/`，这条几乎必然发生。
+ *
+ * 挂到 `globalThis` 上之后，换代只是"再拿一次同一张表"：注册跨换代存活，`facetStore()`
+ * 在新实例里 `rewire()` 时照样订阅到那些来源。提供方被换代时按同 id 覆盖登记（见
+ * {@link FacetRegistry.register} 的来源决胜），不会重复计数。
+ *
+ * @returns 全进程唯一的登记表面。
+ */
+export declare function sharedFacetRegistry(): FacetRegistry;
+/**
+ * 生产用的单例登记表面。
  *
  * 与 {@link createFacetRegistry} 分开，是为了让测试能对着一张干净的表断言协议行为，
  * 而不会被别的用例或别的插件登记的 facet 污染。
+ *
+ * ⚠️ 它只是 {@link sharedFacetRegistry} 在**本模块首次加载时**取到的那份引用；跨模块实例
+ * 存活的是 globalThis 上那一张，所以运行期一律经 {@link sharedFacetRegistry} 现取。
  */
 export declare const registry: FacetRegistry;
 /**
