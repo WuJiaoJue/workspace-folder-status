@@ -17,15 +17,16 @@
  * 字段定义在 `badge-field.ts`（纯逻辑，可单测）；这里只管把它们接到模型与槽位上。
  */
 import { useEffect, useId, useMemo, useSyncExternalStore } from 'react'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import {
   SettingsForm,
   SettingsFormModel,
+  StateDot,
   Switch,
   type SettingsFormLabels,
   type SettingsFormScope,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ALL_BADGE_FIELDS, BADGE_FIELDS, isDraftEnabled } from './badge-field.ts'
+import { ALL_BADGE_FIELDS, BADGE_FIELDS, BADGE_FIELD_DOT_STATE, isDraftEnabled } from './badge-field.ts'
 import type { WorkspaceKey } from './locales.ts'
 import css from './BadgeSettingsCard.module.css'
 
@@ -93,10 +94,12 @@ export function BadgeSettingsCard({ scope, t }: BadgeSettingsCardProps): JSX.Ele
       <section className={css.section} aria-labelledby={badgeSectionId}>
         <h3 className={css.heading} id={badgeSectionId}>{t('settings.badge.section')}</h3>
         {/* 顺序 = 徽标画点顺序（待审批 → 进行中 → 已完成）。外部来源不在这里：它们的
-            显隐归来源自己（不注册就是不显示），本插件卡片上不该出现别人家的名字。 */}
-        <ToggleRow field={BADGE_FIELDS.showPendingInBadge} text={fieldText(BADGE_FIELDS.showPendingInBadge)} label={t('settings.badge.showPending')} hint={t('settings.badge.showPendingHint')} state={state} actions={actions} />
-        <ToggleRow field={BADGE_FIELDS.showRunningInBadge} text={fieldText(BADGE_FIELDS.showRunningInBadge)} label={t('settings.badge.showRunning')} hint={t('settings.badge.showRunningHint')} state={state} actions={actions} />
-        <ToggleRow field={BADGE_FIELDS.showCompletedInBadge} text={fieldText(BADGE_FIELDS.showCompletedInBadge)} label={t('settings.badge.showCompleted')} hint={t('settings.badge.showCompletedHint')} state={state} actions={actions} />
+            显隐归来源自己（不注册就是不显示），本插件卡片上不该出现别人家的名字。
+            每行行首那枚点是**真徽标**（同一个 `StateDot`、同一份状态表），不是示意图 ——
+            卡片预览与徽标说的必须是同一件事。 */}
+        <ToggleRow field={BADGE_FIELDS.showPendingInBadge} text={fieldText(BADGE_FIELDS.showPendingInBadge)} label={t('settings.badge.showPending')} hint={t('settings.badge.showPendingHint')} state={state} actions={actions} specimen={<StateDot state={BADGE_FIELD_DOT_STATE.showPendingInBadge} size={12} />} />
+        <ToggleRow field={BADGE_FIELDS.showRunningInBadge} text={fieldText(BADGE_FIELDS.showRunningInBadge)} label={t('settings.badge.showRunning')} hint={t('settings.badge.showRunningHint')} state={state} actions={actions} specimen={<StateDot state={BADGE_FIELD_DOT_STATE.showRunningInBadge} size={12} />} />
+        <ToggleRow field={BADGE_FIELDS.showCompletedInBadge} text={fieldText(BADGE_FIELDS.showCompletedInBadge)} label={t('settings.badge.showCompleted')} hint={t('settings.badge.showCompletedHint')} state={state} actions={actions} specimen={<StateDot state={BADGE_FIELD_DOT_STATE.showCompletedInBadge} size={12} />} />
       </section>
       <section className={css.section} aria-labelledby={hoverSectionId}>
         <h3 className={css.heading} id={hoverSectionId}>{t('settings.hover.section')}</h3>
@@ -110,19 +113,23 @@ export function BadgeSettingsCard({ scope, t }: BadgeSettingsCardProps): JSX.Ele
   )
 }
 
-/** 单行开关：label + Switch + hint。 */
-function ToggleRow({ field, text, label, hint, state, actions }: {
+/** 单行开关：label + Switch + hint。`specimen` 是行首那枚预览点（可选）。 */
+function ToggleRow({ field, text, label, hint, state, actions, specimen }: {
   field: string
   text: string
   label: string
   hint: string
   state: { writable: boolean; saving: boolean }
   actions: { edit: (field: string, value: string) => void }
+  specimen?: ReactNode
 }): JSX.Element {
   return (
     <div className={css.badgeField}>
       <div className={css.badgeToggleRow}>
-        <span className={css.badgeToggleLabel}>{label}</span>
+        <span className={css.badgeToggleLabel}>
+          {specimen !== undefined && <span className={css.badgeSpecimen}>{specimen}</span>}
+          {label}
+        </span>
         <Switch
           checked={isDraftEnabled(text)}
           label={label}

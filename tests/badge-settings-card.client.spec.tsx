@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { zh } from '../src/client/locales.ts'
-import { ALL_BADGE_FIELDS, isDraftEnabled, showCompletedField } from '../src/client/badge-field.ts'
+import { ALL_BADGE_FIELDS, BADGE_FIELD_DOT_STATE, isDraftEnabled, showCompletedField } from '../src/client/badge-field.ts'
 import { BadgeSettingsCard } from '../src/client/BadgeSettingsCard.tsx'
 
 /** 文案取值器：直接用中文词典，断言里就不必抄一份字符串。 */
@@ -121,6 +121,13 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 
   return {
     SettingsFormModel: FakeSettingsFormModel,
+    // 官方 `StateDot`：真实实现是 aria-hidden 的纯展示元素，契约上带 `state`。
+    // 桩里保留 `data-state`，好让用例断言"卡片预览的那枚点 = 徽标要画的那枚点"。
+    StateDot: ({ state, size }: { state: string; size?: number | undefined }) => createElement('span', {
+      'data-state': state,
+      'data-size': size === undefined ? '' : String(size),
+      'aria-hidden': 'true',
+    }),
     Switch: ({ checked, onChange, label, disabled }: {
       checked: boolean
       onChange: (next: boolean) => void
@@ -216,6 +223,24 @@ describe('BadgeSettingsCard', () => {
 
     expect(model().scope).toBe(scope)
     expect(model().specs).toEqual(ALL_BADGE_FIELDS)
+  })
+
+  it('每行行首那枚预览点 = 徽标实际画的那枚点（同一份状态表）', () => {
+    // 卡片预览与徽标必须说同一件事：预览用官方 `StateDot`、状态取自
+    // `BADGE_FIELD_DOT_STATE` —— 与 `rows/GroupBadge.tsx` 画的是同一张表。
+    render(<BadgeSettingsCard scope={scope} t={t} />)
+
+    const specimens = [...document.querySelectorAll('[data-state]')]
+      .map(node => node.getAttribute('data-state'))
+    expect(specimens).toEqual([
+      BADGE_FIELD_DOT_STATE.showPendingInBadge,
+      BADGE_FIELD_DOT_STATE.showRunningInBadge,
+      BADGE_FIELD_DOT_STATE.showCompletedInBadge,
+    ])
+    // 三档分别是黄点 / 转圈 / 绿点，与文案里说的形状一致
+    expect(BADGE_FIELD_DOT_STATE.showPendingInBadge).toBe('warning')
+    expect(BADGE_FIELD_DOT_STATE.showRunningInBadge).toBe('ongoing')
+    expect(BADGE_FIELD_DOT_STATE.showCompletedInBadge).toBe('done')
   })
 
   it('开关顺序 = 徽标画点顺序，且卡片上没有任何别人家的名字', () => {

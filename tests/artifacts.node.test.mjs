@@ -112,3 +112,37 @@ test('每个实现源文件都有对应的 lib/types 产物', () => {
     '以下产物缺失——`tsc` 的增量缓存会静默跳过输出，跑全量构建：rm -rf lib/types lib/tsconfig.tsbuildinfo && pnpm build',
   )
 })
+
+/**
+ * 卡片预览与徽标必须说同一件事。
+ *
+ * 卡片里给每行画的预览点，用的是官方 `StateDot`，状态取自 `badge-field.ts` 的
+ * `BADGE_FIELD_DOT_STATE`；折叠徽标画的那三枚点也必须取自**同一张表**。两处各写一套
+ * 的话，早晚漂成"卡片预览与徽标说的不是一回事" —— 而那正是本仓库反复要消灭的那类失败
+ * （#25① 修过点行与明细的顺序，#37 发现配置面里混着别人家的语义）。
+ *
+ * 这条锁的是**源码形状**：徽标那三枚点必须从共享表里取，不能又写死一遍字面量。
+ */
+test('徽标的三枚点与卡片预览共用 BADGE_FIELD_DOT_STATE', () => {
+  const badge = read('src/client/rows/GroupBadge.tsx')
+  const field = read('src/client/badge-field.ts')
+
+  for (const key of ['showPendingInBadge', 'showRunningInBadge', 'showCompletedInBadge']) {
+    assert.ok(
+      field.includes(`${key}: '`),
+      `badge-field.ts 的 BADGE_FIELD_DOT_STATE 里应当有 ${key}`,
+    )
+    assert.ok(
+      badge.includes(`BADGE_FIELD_DOT_STATE.${key}`),
+      `GroupBadge.tsx 画 ${key} 那一枚点时必须取 BADGE_FIELD_DOT_STATE.${key}，不能另写字面量`,
+    )
+  }
+
+  // 徽标里不该再出现写死的状态字面量（三枚点各一处）。
+  const hardCoded = badge.match(/state="(warning|ongoing|done)"/g) ?? []
+  assert.equal(
+    hardCoded.length,
+    0,
+    `GroupBadge.tsx 里还有写死的状态：${hardCoded.join(', ')} —— 状态要从共享表取`,
+  )
+})
