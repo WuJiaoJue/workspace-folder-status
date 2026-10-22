@@ -11,6 +11,7 @@
 - **来源**：`src/` 与 `tests/` 原从上游 `0.2.0-rc.2` 源码树拷入。`0.2.1-rc.2` 一代的发布包只带 `lib/`，本次同步以官方 `.d.ts`、`lib/client.js`、官方 README 为对照基线，并按本地 `src/` 结构逐项移植。
 - **不要再 diff `lib/`**：`lib/client.js` 是 tsdown 产物（`window.__ModuleLoader__.load({ id: 'dsh-group-status', factory })` 闭包工厂），不是可 diff 的官方复制品；npm 上发布的上游包同样只带构建产物。**rebase 对象永远是 `src/`。**
 - **构建链**：`build/tools/` 是上游 tsdown 客户端预设拉平后的自包含副本（自解析 manifest、扁平导入、不扫 monorepo 路径）；`tsconfig.json` 是独立客户端配置，去掉了 monorepo base 与 project references。
+- **宿主契约有守卫**：`src/client/tree.ts` 是宿主 workspace 投影的 fork，其中 `pendingInteraction.kind` 与两个状态事实（`completionUnread` / `pendingInteraction`）是**会静默失效**的契约点 —— 宿主改了它们的形状，我们照样编译通过、测试照样全绿，只是徽标从此少画一类状态。`tests/host-pending-kinds.node.test.mjs` 直接读**锁定版本**宿主的实现来比对，宿主一改就红；人看的版本是 `pnpm check-upstream`（见 rebase 步骤第 0 步）。
 - **产物要提交**：`lib/` 随仓库提交，`dsh plugin --profile web add "github:dsh-plugin-collection/dsh-group-status"` 直接吃它。**改完 `src/` 必须 `pnpm build` 并一并提交 `lib/`**，否则从 GitHub 安装的人拿不到新行为。
 - **产物不是逐字节可复现的**：`lib/client.js` 里 CSS Modules 的类名哈希（如 `.eCE9Ta_…`）与 `//#region` 注释路径都跟**构建时的绝对路径**有关。同一份 `src/` 在不同 checkout（比如 issue worktree）里构建，`lib/` 会有几十行「只有哈希和路径不同」的 diff——那是噪声，不是功能差异。所以：**谁改 `src/` 谁重建并提交**，review 时不要把这种 diff 当行为变更。
 - **`tsc` 的增量缓存会静默漏产物**（2026-10-16 踩过）：`tsconfig.json` 开了 `incremental` + `composite`，缓存写在 `lib/tsconfig.tsbuildinfo`（已被 `.gitignore` 忽略，不入库）。但**本地那份会陈旧**：`tsc` 认为源文件没变就跳过输出，产物于是停在旧版本，而它**退出码仍是 0、一行错误都不报**。这次是 `lib/types/index.js`（`tsdown.config.ts` 的打包入口）比 `src/index.ts` 少 6 个配置项，`lib/index.js` 里的 `Config` 只剩 1 个字段，**设置界面因此只画得出 1 个开关**。彻底修复要**全量**重建，只删 `lib/types` 不够：
@@ -55,6 +56,16 @@
 
 ## rebase 步骤
 
+0. **先看契约有没有漂移**：`pnpm check-upstream --latest` —— 它比对我们认的待处理 kind
+   集合与宿主实现是否一致，以及宿主是否还带着 `completionUnread` / `pendingInteraction`
+   这两个状态事实。**这是唯一能自动发现"宿主换了代"的地方**：这两个契约点一旦变了，我们的
+   fork 会**静默**地再也不画某一类状态（不报错、不红测试），只有这道检查会说话。
+   > 老版本这里有个 `check-upstream` 脚本，比的是"vendored 上游源码目录"与 npm 最新版的
+   > 哈希。它**从来没有工作过**：本地那份 pristine 副本在 `src/vendor/`（早就不存在了，
+   > vendored 的上游源码直接摊在 `src/` 下），而上游发布包里**没有 `src/`**（只有 `lib/`），
+   > 于是脚本一跑就 `ENOENT: scandir 'src/vendor/src'`。文档却还让人照着它 rebase —— 一条
+   > 指着不存在目录的命令比没有更糟：它让人以为"没红就是没漂移"。现在它比的是**契约点**，
+   > 离线可跑、且同一份实现也进了 `npm test`（`tests/host-pending-kinds.node.test.mjs`）。
 1. **取新基线源码**：优先从新一代 DSH 源码树取 `@deepseek-ai/dsh-client-ui-workspace` 的 `src/` 与 `tests/`。发布包不含 `src/` 时，用 `lib/types/**/*.d.ts`、`lib/client.js` 与包内 README 对照移植；不要只看类型就认定行为一致。
 2. **先看上游动了什么**：把新基线的 `src/` 与本地 `src/` 逐个 diff，重点看第 1–5、7 条改动落点周围有没有结构变化，以及槽位名 / 组件签名是否变了（见下节）。
 3. **覆盖再施加**：用新基线覆盖 `src/`、`tests/`，然后按上表逐条把本地改动重新施加（不要直接 `git merge` 整棵源码树之外的东西）。
@@ -72,11 +83,12 @@
 
 ## 测试基线
 
-`pnpm test` = `test:node`（`npm run types && node --test`，3 个文件 / 27 用例）→ `test:spec`（`vitest run`，jsdom，8 个文件 / 165 用例）。合计 **192 用例**：
+`pnpm test` = `test:node`（`npm run types && node --test`，4 个文件 / 37 用例）→ `test:spec`（`vitest run`，jsdom，9 个文件 / 170 用例）。合计 **207 用例**：
 
 | 文件 | 来源 | 覆盖 |
 |---|---|---|
 | `tests/artifacts.node.test.mjs` | **本仓库** | 构建产物存在性、`Config` 字段对齐、DSH `0.2.1-rc.2` 依赖基线（4 用例，`node --test`）|
+| `tests/host-pending-kinds.node.test.mjs` | **本仓库** | **宿主契约守卫**：我们认的待处理 kind 必须与锁定版宿主实现一致；宿主认的状态事实（`completionUnread` / `pendingInteraction`）不能消失；外加一条"守卫自己不是摆设"的反例（3 用例，`node --test`）|
 | `tests/cross-plugin-summary.node.test.mjs` | **本仓库** | provider 侧模板：store 订阅、迟到登记自愈、分组折叠、id 归一、帧等值（12 用例，`node --test`）|
 | `tests/facets.node.test.mjs` | **本仓库** | facet 协议：校验、来源决胜、注销、排序、重入合并、缺省合并与非法色档护栏（11 用例，`node --test`）|
 | `tests/tree.client.spec.ts` | 上游 | 分组派生、排序、会话行与搜索 |

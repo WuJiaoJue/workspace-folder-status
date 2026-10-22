@@ -190,6 +190,8 @@ dsh plugin --profile web remove dsh-group-status
 
 上游一换代就得按[升级手册](./docs/upgrading.md) rebase 一次；上游改槽位名、组件签名或上下文契约时，本包不会自动跟上。
 
+其中**会静默失效**的那部分（我们认的待处理 kind 集合、我们从宿主读的两个状态事实）有守卫兜着：`tests/host-pending-kinds.node.test.mjs` 直接读锁定版宿主的实现来比对，宿主一改就红；人看的版本是 `pnpm check-upstream`（加 `--latest` 还能查 npm 上已发布的最高版）。
+
 ---
 
 ## 开发
