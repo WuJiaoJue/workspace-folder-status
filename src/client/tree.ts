@@ -38,8 +38,27 @@ export function owningGroupKey(
     ?.workspaceId as string | undefined) ?? UNGROUPED_KEY
 }
 
+/**
+ * 待处理 kind —— 宿主 workspace 投影里"有专门行内表现"的那几种。
+ *
+ * ⚠️ 这是**宿主的一组口径**，本插件只跟随：`src/client/tree.ts` 是宿主
+ * `@deepseek-ai/dsh-client-ui-workspace` 投影的 fork，宿主的 `visiblePendingKind`
+ * 认的正是这几个，并且**同样把没认出来的 kind 悄悄丢掉**。因此：
+ *
+ * - 宿主新增一种 kind 时，这里要跟着加。守卫已经就位：
+ *   `tests/host-pending-kinds.node.test.mjs` 直接读**锁定版本**宿主的实现来比对，
+ *   宿主一改，测试就红，并告诉你该往哪加。
+ * - 反过来，**不要**自己多认几种。那会让徽标与宿主侧栏"两处两套事实"——宿主不画的
+ *   我们画了，用户会以为宿主漏了；而"宿主侧栏不画"本身又是另一件事（那是宿主的
+ *   决定，不在本插件的职权内）。
+ */
+export const PENDING_INTERACTION_KINDS = ['approval', 'plan-review', 'question'] as const
+
 /** Pending interaction kinds with dedicated Workspace-row presentation. */
-export type SessionPendingInteractionStatus = 'approval' | 'plan-review' | 'question'
+export type SessionPendingInteractionStatus = (typeof PENDING_INTERACTION_KINDS)[number]
+
+/** 宿主认的 kind 集合（查表用）。 */
+const PENDING_INTERACTION_KIND_SET: ReadonlySet<string> = new Set(PENDING_INTERACTION_KINDS)
 type SessionStatuses = SessionStatusSnapshot
 
 function mainSessionId(list: SessionListState): SessionId | undefined {
@@ -391,14 +410,9 @@ function groupByWorkspace(
 
 /** Keep navigation presentation independent from domain-owned interaction objects. */
 function visiblePendingKind(kind: string | undefined): SessionPendingInteractionStatus | undefined {
-  switch (kind) {
-    case 'approval':
-    case 'plan-review':
-    case 'question':
-      return kind
-    default:
-      return undefined
-  }
+  return kind !== undefined && PENDING_INTERACTION_KIND_SET.has(kind)
+    ? (kind as SessionPendingInteractionStatus)
+    : undefined
 }
 
 function runningChildCount(list: SessionListState, parentId: SessionId, statuses: SessionStatuses): number {

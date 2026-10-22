@@ -6,6 +6,22 @@
 
 ## 未发布
 
+- **fix** 宿主契约漂移**从此有人看着了**：`pendingInteraction.kind` 是开放集合
+  （`SessionPendingInteractionMap` 靠声明合并扩展，任何宿主包都能贡献自己的 kind），而本仓库的
+  `src/client/tree.ts` 是宿主 workspace 投影的 fork。宿主新增一种 kind 时本插件**不会**自动跟上，
+  于是宿主侧栏与折叠徽标会**一起不显示**它 —— 两边口径一致所以不是"谁错了"，但用户只会觉得
+  "这俩对不上"。而"宿主换了代"本来该由 `scripts/check-upstream.ts` 提醒，**那个脚本从来没有工作过**：
+  它比对的 `src/vendor/src` 目录早就不存在了（vendored 的上游源码直接摊在 `src/` 下），上游发布包里
+  也没有 `src/`（只有 `lib/`），于是它一跑就 `ENOENT: scandir 'src/vendor/src'`；而 `docs/upgrading.md`
+  还让人照着它 rebase —— 一条指着不存在目录的命令比没有更糟：它让人以为"没红就是没漂移"。
+  现在：同一份比对实现（`src/host-contract.ts`）被两处调用 —— `npm test` 里的
+  `tests/host-pending-kinds.node.test.mjs`（离线，读锁定版宿主的实现，CI 会跑）与
+  `pnpm check-upstream`（人看的；`--latest` 还能查 npm 上**已发布的最高版**，注意该包的 `latest`
+  标签是旧的、还指着 0.0.1-rc.1，不能直接用 `npm view <pkg> version`）。守卫覆盖三件事：我们认的
+  kind 集合必须与宿主一致、宿主不能把我们要读的两个状态事实改名、以及"守卫自己不是摆设"（拿真实
+  bundle 的改造副本当反例）。另加类型层一道：`Rows.tsx` 的 `assertNever` 让"新增 kind 却没给行内
+  表现"直接编译不过。
+
 - **breaking** 删除设置项 `showScheduledInBadge` 与 `showWaitingReviewInBadge`：**外部来源的显隐不再由本插件管**。
   这两个字段把别人家的域名（定时任务 / 等待评审）、来源名（dsh-later / dsh-gitea-dispatch）连图标形状
   （"时钟" / "沙漏"）全都写死在**消费方**的 `Config`、设置卡片与文案里，与本插件「不认识任何具体来源」的

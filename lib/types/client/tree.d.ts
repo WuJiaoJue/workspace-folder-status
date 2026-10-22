@@ -18,8 +18,23 @@ export declare const UNGROUPED_KEY = "";
  * @returns owning Workspace id, or {@link UNGROUPED_KEY} when no Workspace accounts for it.
  */
 export declare function owningGroupKey(workspaces: readonly WorkspaceView[], sessionId: SessionId): string;
+/**
+ * 待处理 kind —— 宿主 workspace 投影里"有专门行内表现"的那几种。
+ *
+ * ⚠️ 这是**宿主的一组口径**，本插件只跟随：`src/client/tree.ts` 是宿主
+ * `@deepseek-ai/dsh-client-ui-workspace` 投影的 fork，宿主的 `visiblePendingKind`
+ * 认的正是这几个，并且**同样把没认出来的 kind 悄悄丢掉**。因此：
+ *
+ * - 宿主新增一种 kind 时，这里要跟着加。守卫已经就位：
+ *   `tests/host-pending-kinds.node.test.mjs` 直接读**锁定版本**宿主的实现来比对，
+ *   宿主一改，测试就红，并告诉你该往哪加。
+ * - 反过来，**不要**自己多认几种。那会让徽标与宿主侧栏"两处两套事实"——宿主不画的
+ *   我们画了，用户会以为宿主漏了；而"宿主侧栏不画"本身又是另一件事（那是宿主的
+ *   决定，不在本插件的职权内）。
+ */
+export declare const PENDING_INTERACTION_KINDS: readonly ["approval", "plan-review", "question"];
 /** Pending interaction kinds with dedicated Workspace-row presentation. */
-export type SessionPendingInteractionStatus = 'approval' | 'plan-review' | 'question';
+export type SessionPendingInteractionStatus = (typeof PENDING_INTERACTION_KINDS)[number];
 type SessionStatuses = SessionStatusSnapshot;
 /** One top-level session row in a group or the flat list. */
 export interface SessionNode {
