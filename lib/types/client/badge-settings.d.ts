@@ -26,11 +26,6 @@ export interface SettingsSnapshotLike {
     readonly status: string;
     readonly value?: unknown;
 }
-/** 设置面的最小结构面（与宿主 `ConfigForm` 兼容）。 */
-export interface SettingsScopeLike {
-    getSnapshot(): SettingsSnapshotLike;
-    subscribe(listener: () => void): () => void;
-}
 /** 本插件在浏览器半关心的设置项。 */
 export interface ResolvedBadgeSettings {
     /** 折叠徽标是否显示「已完成」绿点；缺失/非法一律回落 true。 */
@@ -44,17 +39,6 @@ export interface ResolvedBadgeSettings {
     /** 徽标数字显示阈值：数量 >= 此值时才显示数字；缺失/非法一律回落 2（默认 count=1 时省略）。 */
     countThreshold: number;
 }
-/**
- * `ResolvedBadgeSettings` 里的布尔开关键。
- *
- * ⚠️ 这里**只有本插件自己的语义**。外部来源的显隐不归这里管：来源想被关掉就不注册
- * facet（见 `docs/facet-protocol.md`「显隐归谁」）。曾经存在的
- * `showScheduledInBadge` / `showWaitingReviewInBadge` 是替 dsh-later /
- * dsh-gitea-dispatch 写死的字段名与图标形状，与本插件「不认识任何来源」直接矛盾，已删。
- */
-export type BooleanSettingKey = {
-    [K in keyof ResolvedBadgeSettings]: ResolvedBadgeSettings[K] extends boolean ? K : never;
-}[keyof ResolvedBadgeSettings];
 /** 标准 props 源的结构面（与 `HostObservable<ResolvedBadgeSettings>` 兼容）。 */
 export interface BadgeSettingsSource {
     getSnapshot(): ResolvedBadgeSettings;

@@ -44,11 +44,9 @@ export declare const BADGE_FIELDS: {
     readonly showHoverDetails: "showHoverDetails";
     readonly countThreshold: "countThreshold";
 };
-/** 存储值解析成开关状态：只有显式 false 才是「关闭」。 */
-export declare function isFieldEnabled(value: unknown): boolean;
 /**
- * 草稿文本解析成开关状态：与 {@link isFieldEnabled} 不同，这里比较的是模型给的
- * **文本**，别把字符串喂给上面那个函数（`'false' !== false` 恒真）。
+ * 草稿文本解析成开关状态：比较的是模型给的**文本**，不是存储值 ——
+ * 别把字符串 `'false'` 当成布尔 `false`（`'false' !== false` 恒真）。
  */
 export declare function isDraftEnabled(text: string): boolean;
 /** 各字段的字段转换规格。 */
