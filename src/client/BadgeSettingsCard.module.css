@@ -45,6 +45,13 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.badgeSpecimen {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
 .badgeToggleLabel {
   flex: 1;
   min-width: 0;
