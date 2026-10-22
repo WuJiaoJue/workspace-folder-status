@@ -20,6 +20,7 @@ import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode } from '../tree.ts'
 import type { ResolvedBadgeSettings } from '../badge-settings.ts'
 import { facetCountTotal, facetGlyph, facetPulseClass, groupLiveLabel } from '../badge-labels.ts'
+import { BADGE_FIELD_DOT_STATE } from '../badge-field.ts'
 import css from './Rows.module.css'
 
 export { facetCountTotal, facetGlyph, facetPulseClass, groupLiveLabel, hoverStatusLines } from '../badge-labels.ts'
@@ -61,8 +62,10 @@ export function groupLiveBadge(
   if (pending === 0 && active === 0 && completed === 0 && facetTotal === 0) return null
   const label = groupLiveLabel(s, t, settings, now)
   const dots: ReactNode[] = []
-  if (pending > 0) dots.push(<StateDot key="warn" state="warning" />)
-  if (active > 0) dots.push(<StateDot key="run" state="ongoing" />)
+  // 三枚点取自 `BADGE_FIELD_DOT_STATE`（与设置卡片里给每行画的预览点同一份）—— 两处各写
+  // 一套的话，早晚漂成"卡片预览与徽标说的不是一回事"。
+  if (pending > 0) dots.push(<StateDot key="warn" state={BADGE_FIELD_DOT_STATE.showPendingInBadge} />)
+  if (active > 0) dots.push(<StateDot key="run" state={BADGE_FIELD_DOT_STATE.showRunningInBadge} />)
   // #25①:点行顺序此前是 pending → active → **done** → facet，而明细（`hoverStatusLines`）
   // 是 pending → active → **facet** → done，两处相反；而 `badge-labels.ts` 的注释声称两者
   // 「完全一致」，括号里写的还正是明细那一种。此处按明细对齐（facet 排在 done 之前），
@@ -81,7 +84,7 @@ export function groupLiveBadge(
       // `pulse: false` 的来源跟着呼吸——那条约定不能依赖邻居的开关。
       : <span key={entry.facet.id} className={pulseClass}>{glyph}</span>)
   }
-  if (completed > 0) dots.push(<StateDot key="done" state="done" />)
+  if (completed > 0) dots.push(<StateDot key="done" state={BADGE_FIELD_DOT_STATE.showCompletedInBadge} />)
   // 数字 = 待审批 + 进行中（含子智能体）+ 已完成 + 各外部来源自己报的条数。
   // #25②:「含子智能体」此前是**空头承诺**——`summarizeGroupStatus` 在 pending 分支里
   //  `continue` 掉了 `subagents += n.runningSubagentCount`，行内却给两个点。计数判据已

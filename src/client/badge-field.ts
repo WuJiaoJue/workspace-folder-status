@@ -13,7 +13,24 @@
  * 类型从 primitives **type-only** 引入：编译期接住官方契约，运行时不留依赖，
  * 测试里也就不必把那个包（及其整棵依赖闭包）拉进来。
  */
-import type { SettingsFieldSpec } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SettingsFieldSpec, StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+
+/**
+ * 每个开关控制的是徽标上的哪一枚点。
+ *
+ * 单一事实来源：设置卡片里给每行画的**预览点**与折叠徽标实际画的那三枚点，都从这里取。
+ * 两处各写一套的话迟早会漂，而漂了的后果不是"多一个点少一个点"，是**卡片预览与徽标说的
+ * 不是一回事**（同一族毛病：#25① 修过点行与明细的顺序，#37 又发现配置面里混着别人家的语义）。
+ *
+ * 对应关系与 `rows/GroupBadge.tsx` 一致：待审批 = warning 黄点、进行中 = ongoing 转圈、
+ * 已完成 = done 绿点。外部来源的点**不在这里** —— 它们由来源自己画（`renderIcon`），
+ * 也不在本插件的卡片上（显隐归来源自己）。
+ */
+export const BADGE_FIELD_DOT_STATE = {
+  showPendingInBadge: 'warning',
+  showRunningInBadge: 'ongoing',
+  showCompletedInBadge: 'done',
+} as const satisfies Record<string, StateDotState>
 
 /**
  * 卡片字段名（与 `src/index.ts` 的 `Config` 同名同义）。
