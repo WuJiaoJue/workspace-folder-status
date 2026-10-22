@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.5.0 — 2026-10-22
+
 - **fix** 宿主契约漂移**从此有人看着了**：`pendingInteraction.kind` 是开放集合
   （`SessionPendingInteractionMap` 靠声明合并扩展，任何宿主包都能贡献自己的 kind），而本仓库的
   `src/client/tree.ts` 是宿主 workspace 投影的 fork。宿主新增一种 kind 时本插件**不会**自动跟上，
