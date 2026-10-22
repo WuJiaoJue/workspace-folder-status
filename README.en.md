@@ -64,12 +64,14 @@ Rules:
 | `showRunningInBadge` | `true` | Whether the folded badge shows the "running" spinning dot |
 | `showPendingInBadge` | `true` | Whether the folded badge shows the "pending" yellow dot (approval / plan review / waiting for answer) |
 | `showCompletedInBadge` | `true` | Whether the folded badge shows a green "completed" dot |
-| `showScheduledInBadge` | `true` | Whether the folded badge shows the "scheduled" clock icon (data from dsh-later) |
-| `showWaitingReviewInBadge` | `true` | Whether the folded badge shows the "waiting for review" hourglass icon (data from dsh-gitea-dispatch) |
 | `showHoverDetails` | `true` | Whether the hover card shows the aggregated status detail lines |
 | `countThreshold` | `2` | The count is shown on the badge only when the total is >= this value (default 2, i.e. omits the count when it equals 1 — the dots already convey "something is happening"; set to 1 to always show) |
 
-Switching a source off takes it out of the folded row's aggregate entirely — no dot/icon, no contribution to the badge count, no hover detail line, and it no longer keeps the badge alive. **The state dot on a session row itself is unaffected**: that is row-level state, not a folder hint. With `showHoverDetails` off, the hover card shows only the title, path, and creation time.
+Switching a tier off takes it out of the folded row's aggregate entirely — no dot/icon, no contribution to the badge count, no hover detail line, and it no longer keeps the badge alive. **The state dot on a session row itself is unaffected**: that is row-level state, not a folder hint. With `showHoverDetails` off, the hover card shows only the title, path, and creation time.
+
+**External sources (e.g. "waiting for review", "scheduled") have no switch on this page, on purpose.** This plugin knows no concrete source, so its config face must not carry another plugin's domain names or icon shapes either. To silence a source, use **that plugin's own** settings card: when it is off, it simply does not register its facet, and the badge loses that glyph. See "Who owns visibility" in [`docs/facet-protocol.md`](docs/facet-protocol.md).
+
+> ⚠️ As of this change the `showScheduledInBadge` / `showWaitingReviewInBadge` fields are removed (they hard-coded names and icon shapes on behalf of dsh-later / dsh-gitea-dispatch). Values left in the profile are no longer read and behave as the default "show".
 
 Saving applies it live, with no refresh; the Host writes it into the profile patch's `dsh-group-status` entry `config`, so it survives a page reload. When the settings face cannot be read (e.g. the Host serves no settings service), it falls back to the default "show", matching the schema default — failing to read a config is not the user turning it off.
 
@@ -100,7 +102,7 @@ const unregister = gs?.registerGroupStatusFacet?.({
   subscribe: store.subscribe,           // an external-store face, not a React hook
   getSnapshot: store.getSnapshot,
   fold: (snapshot, sessionIds, now) => ({ count, tone, pulse, data }),
-  merge, label, renderIcon, settingKey, order,   // all optional
+  merge, label, renderIcon, order,             // all optional
 })
 ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 ```

@@ -14,13 +14,17 @@
  * 测试里也就不必把那个包（及其整棵依赖闭包）拉进来。
  */
 import type { SettingsFieldSpec } from '@deepseek-ai/dsh-client-ui-primitives';
-/** 卡片字段名（与 `src/index.ts` 的 `Config` 同名同义）。 */
+/**
+ * 卡片字段名（与 `src/index.ts` 的 `Config` 同名同义）。
+ *
+ * ⚠️ 只有本插件自己的语义。曾有 `showScheduledInBadge` / `showWaitingReviewInBadge`
+ * 两个字段替 dsh-later / dsh-gitea-dispatch 写死名字与图标形状，现已删除：外部来源的
+ * 显隐归来源自己（不注册就是不显示）。
+ */
 export declare const BADGE_FIELDS: {
     readonly showCompletedInBadge: "showCompletedInBadge";
     readonly showRunningInBadge: "showRunningInBadge";
     readonly showPendingInBadge: "showPendingInBadge";
-    readonly showScheduledInBadge: "showScheduledInBadge";
-    readonly showWaitingReviewInBadge: "showWaitingReviewInBadge";
     readonly showHoverDetails: "showHoverDetails";
     readonly countThreshold: "countThreshold";
 };
@@ -35,10 +39,15 @@ export declare function isDraftEnabled(text: string): boolean;
 export declare const showCompletedField: SettingsFieldSpec;
 export declare const showRunningField: SettingsFieldSpec;
 export declare const showPendingField: SettingsFieldSpec;
-export declare const showScheduledField: SettingsFieldSpec;
-export declare const showWaitingReviewField: SettingsFieldSpec;
 export declare const showHoverDetailsField: SettingsFieldSpec;
 export declare const countThresholdField: SettingsFieldSpec;
-/** 所有字段规格（按卡片渲染顺序）。 */
+/**
+ * 所有字段规格。
+ *
+ * ⚠️ 顺序**必须**与徽标画点的顺序一致（`rows/GroupBadge.tsx`：待审批 → 进行中 → 已完成；
+ * 外部来源排在已完成之前，但它们不在本插件的卡片上）。用户操作场景就是"我看到徽标第 N
+ * 个图标，想关掉它"，卡片顺序错位会让人怀疑两处是两套事实 —— 同一族毛病 #25① 已经在
+ * 点行与明细之间修过一次。回归用例：`tests/badge-settings-card.client.spec.tsx`。
+ */
 export declare const ALL_BADGE_FIELDS: SettingsFieldSpec[];
 //# sourceMappingURL=badge-field.d.ts.map

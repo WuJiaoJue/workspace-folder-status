@@ -218,6 +218,30 @@ describe('BadgeSettingsCard', () => {
     expect(model().specs).toEqual(ALL_BADGE_FIELDS)
   })
 
+  it('开关顺序 = 徽标画点顺序，且卡片上没有任何别人家的名字', () => {
+    // 用户的操作场景是「我看到折叠徽标第 N 个图标，想关掉它」。卡片与徽标顺序不一致，
+    // 两处就会读成两套事实 —— #25① 已经在「点行 vs 明细」之间修过一次，卡片是第三个面。
+    // 顺序的单一事实来源是 `ALL_BADGE_FIELDS`（徽标侧见 `rows/GroupBadge.tsx`）。
+    render(<BadgeSettingsCard scope={scope} t={t} />)
+
+    const badgeSection = screen
+      .getByRole('heading', { level: 3, name: zh['settings.badge.section'] })
+      .closest('section') as HTMLElement
+    const order = [...badgeSection.querySelectorAll('[role="switch"]')]
+      .map(node => node.getAttribute('aria-label') ?? '')
+    expect(order).toEqual([
+      zh['settings.badge.showPending'],
+      zh['settings.badge.showRunning'],
+      zh['settings.badge.showCompleted'],
+    ])
+
+    // 本插件不认识任何具体来源：卡片文案里不该出现提供方的名字，也不该替它们承诺形状。
+    const text = document.body.textContent ?? ''
+    for (const leaked of ['dsh-later', 'dsh-gitea-dispatch', '定时任务', '等待评审', '沙漏', '时钟']) {
+      expect(text.includes(leaked), `卡片不该出现「${leaked}」`).toBe(false)
+    }
+  })
+
   it('stages a boolean draft through the model instead of writing', () => {
     render(<BadgeSettingsCard scope={scope} t={t} />)
 

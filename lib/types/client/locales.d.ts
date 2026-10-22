@@ -132,10 +132,6 @@ export declare const zh: {
     'settings.badge.showPendingHint': string;
     'settings.badge.showCompleted': string;
     'settings.badge.showCompletedHint': string;
-    'settings.badge.showScheduled': string;
-    'settings.badge.showScheduledHint': string;
-    'settings.badge.showWaitingReview': string;
-    'settings.badge.showWaitingReviewHint': string;
     'settings.hover.section': string;
     'settings.hover.showDetails': string;
     'settings.hover.showDetailsHint': string;
@@ -279,10 +275,6 @@ export declare const en: {
     'settings.badge.showPendingHint': string;
     'settings.badge.showCompleted': string;
     'settings.badge.showCompletedHint': string;
-    'settings.badge.showScheduled': string;
-    'settings.badge.showScheduledHint': string;
-    'settings.badge.showWaitingReview': string;
-    'settings.badge.showWaitingReviewHint': string;
     'settings.hover.section': string;
     'settings.hover.showDetails': string;
     'settings.hover.showDetailsHint': string;

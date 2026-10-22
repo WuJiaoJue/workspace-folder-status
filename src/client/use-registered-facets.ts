@@ -18,36 +18,33 @@
  * `vitest.config.ts` 的 `MONOREPO_ONLY_SPECS`），只能靠刷新页面碰运气。
  *
  * 版本号必须**同时**当两件事用：① 触发重渲染的信号，② memo 的依赖。这里把它收进一个
- * hook，让"只用①不用②"在结构上写不出来，并且让这条接缝能被 `@testing-library/react`
+ * hook，让「只用①、丢掉②」在结构上写不出来，并且让这条接缝能被 `@testing-library/react`
  * 直接覆盖（本文件零宿主 import，宿主依赖闭包进不来）。
  *
- * ## 与协议的关系
+ * ## 为什么现在不再按设置筛
  *
- * 本文件不认识任何具体来源：读的是登记面（`./facets.ts`），筛的是设置（`./facet-visibility.ts`）。
- * 提供方注册/注销、启用/停用插件，都只表现为版本号 +1。
+ * 旧版本这里会过一道 `visibleFacets(list, settings)`，按 `facet.settingKey` 查本插件的
+ * 布尔开关。那意味着**本插件的配置面里写着别人家的语义**（`showScheduledInBadge` /
+ * `showWaitingReviewInBadge`，连图标形状都替对方写死），与"本插件不认识任何来源"直接
+ * 矛盾。现在外部来源的显隐归**来源自己**：它想被关掉就不注册 facet，登记面即所见。
+ * 本插件的开关只管自己那三档会话状态（见 `badge-settings.ts`）。
  *
- * @module dsh-group-status/client/use-visible-facets
+ * @module dsh-group-status/client/use-registered-facets
  */
 import { useMemo, useSyncExternalStore } from 'react'
-import type { ResolvedBadgeSettings } from './badge-settings.ts'
 import type { FacetStore } from './facet-store.ts'
 import type { RegisteredFacet } from './facets.ts'
-import { visibleFacets } from './facet-visibility.ts'
 
 /**
- * 当前**应当参与折叠**的登记来源，按登记面顺序（已按 `order` 排好）。
+ * 当前登记的来源，按登记面顺序（已按 `order` 排好）。
+ *
+ * 引用在版本号不变时保持稳定：登记面是低频事件，重算成本 = O(facet × 组内会话)。
  *
  * @param store - facet 消费侧存储（`facetStore()` 单例）。
- * @param settings - 徽标设置；关掉的来源在折叠之前就被筛掉，数字、图标、`aria-label`
- *   与悬停明细因此同源。
- * @returns 可见登记项；引用在 `(版本, 设置)` 不变时保持稳定。
  */
-export function useVisibleFacets(
-  store: FacetStore,
-  settings: ResolvedBadgeSettings,
-): RegisteredFacet[] {
+export function useRegisteredFacets(store: FacetStore): RegisteredFacet[] {
   // `getVersion` 返回 number，引用天然稳定，不会像"每次新建一个快照对象"那样把订阅打成
   // 死循环（React #185）。
   const version = useSyncExternalStore(store.subscribe, store.getVersion, store.getServerVersion)
-  return useMemo(() => visibleFacets(store.list(), settings), [version, settings])
+  return useMemo(() => [...store.list()], [version])
 }

@@ -15,13 +15,17 @@
  */
 import type { SettingsFieldSpec } from '@deepseek-ai/dsh-client-ui-primitives'
 
-/** 卡片字段名（与 `src/index.ts` 的 `Config` 同名同义）。 */
+/**
+ * 卡片字段名（与 `src/index.ts` 的 `Config` 同名同义）。
+ *
+ * ⚠️ 只有本插件自己的语义。曾有 `showScheduledInBadge` / `showWaitingReviewInBadge`
+ * 两个字段替 dsh-later / dsh-gitea-dispatch 写死名字与图标形状，现已删除：外部来源的
+ * 显隐归来源自己（不注册就是不显示）。
+ */
 export const BADGE_FIELDS = {
   showCompletedInBadge: 'showCompletedInBadge',
   showRunningInBadge: 'showRunningInBadge',
   showPendingInBadge: 'showPendingInBadge',
-  showScheduledInBadge: 'showScheduledInBadge',
-  showWaitingReviewInBadge: 'showWaitingReviewInBadge',
   showHoverDetails: 'showHoverDetails',
   countThreshold: 'countThreshold',
 } as const
@@ -68,8 +72,6 @@ function makeBooleanField(field: string, defaultValue: boolean): SettingsFieldSp
 export const showCompletedField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showCompletedInBadge, true)
 export const showRunningField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showRunningInBadge, true)
 export const showPendingField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showPendingInBadge, true)
-export const showScheduledField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showScheduledInBadge, true)
-export const showWaitingReviewField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showWaitingReviewInBadge, true)
 export const showHoverDetailsField: SettingsFieldSpec = makeBooleanField(BADGE_FIELDS.showHoverDetails, true)
 export const countThresholdField: SettingsFieldSpec = {
   field: BADGE_FIELDS.countThreshold,
@@ -86,13 +88,18 @@ export const countThresholdField: SettingsFieldSpec = {
   },
 }
 
-/** 所有字段规格（按卡片渲染顺序）。 */
+/**
+ * 所有字段规格。
+ *
+ * ⚠️ 顺序**必须**与徽标画点的顺序一致（`rows/GroupBadge.tsx`：待审批 → 进行中 → 已完成；
+ * 外部来源排在已完成之前，但它们不在本插件的卡片上）。用户操作场景就是"我看到徽标第 N
+ * 个图标，想关掉它"，卡片顺序错位会让人怀疑两处是两套事实 —— 同一族毛病 #25① 已经在
+ * 点行与明细之间修过一次。回归用例：`tests/badge-settings-card.client.spec.tsx`。
+ */
 export const ALL_BADGE_FIELDS: SettingsFieldSpec[] = [
-  showCompletedField,
-  showRunningField,
   showPendingField,
-  showScheduledField,
-  showWaitingReviewField,
+  showRunningField,
+  showCompletedField,
   showHoverDetailsField,
   countThresholdField,
 ]

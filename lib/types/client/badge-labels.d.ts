@@ -38,9 +38,9 @@ export declare function facetLines(s: GroupLiveStatus, t: RowTranslate, now: num
  * Accessible label for a folded group's aggregated status, reusing the
  * session-row locale keys so both surfaces read identically.
  *
- * 按设置过滤：**关掉的外部来源根本不在折果里**（`WorkspaceBrowser` 折叠前就按
- * `facet.settingKey` 过滤了登记面），所以这里不必再判设置，`aria-label` 与徽标视觉
- * 天然一致；宿主的行级状态仍按设置逐项过滤。
+ * 按设置过滤：本插件那三档会话状态按设置逐项过滤；**外部来源不参与过滤** —— 登记了就
+ * 一定出现在这里，没登记就不在折果里，所以 `aria-label` 与徽标视觉天然一致，不必在这里
+ * 再判一次设置（本插件也没有替别人家存的开关）。
  */
 export declare function groupLiveLabel(s: GroupLiveStatus, t: RowTranslate, settings: ResolvedBadgeSettings, now?: number): string;
 /**

@@ -43,10 +43,6 @@ export interface ResolvedBadgeSettings {
   showRunningInBadge: boolean
   /** 折叠徽标是否显示「待审批」黄点（approval / plan-review / question）；缺失/非法一律回落 true。 */
   showPendingInBadge: boolean
-  /** 折叠徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）；缺失/非法一律回落 true。 */
-  showScheduledInBadge: boolean
-  /** 折叠徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch，自其 #56 起画沙漏；缺失/非法一律回落 true）。 */
-  showWaitingReviewInBadge: boolean
   /** 悬停卡里是否显示聚合明细行；缺失/非法一律回落 true。 */
   showHoverDetails: boolean
   /** 徽标数字显示阈值：数量 >= 此值时才显示数字；缺失/非法一律回落 2（默认 count=1 时省略）。 */
@@ -56,24 +52,14 @@ export interface ResolvedBadgeSettings {
 /**
  * `ResolvedBadgeSettings` 里的布尔开关键。
  *
- * facet 的 `settingKey` 就是它的字符串形态：状态所有者声明"我受哪个开关管"，
- * 而开关的语义与取值仍由本插件判定。
+ * ⚠️ 这里**只有本插件自己的语义**。外部来源的显隐不归这里管：来源想被关掉就不注册
+ * facet（见 `docs/facet-protocol.md`「显隐归谁」）。曾经存在的
+ * `showScheduledInBadge` / `showWaitingReviewInBadge` 是替 dsh-later /
+ * dsh-gitea-dispatch 写死的字段名与图标形状，与本插件「不认识任何来源」直接矛盾，已删。
  */
 export type BooleanSettingKey = {
   [K in keyof ResolvedBadgeSettings]: ResolvedBadgeSettings[K] extends boolean ? K : never
 }[keyof ResolvedBadgeSettings]
-
-/**
- * 一个 facet 是否被设置关掉。
- *
- * - 没有 `settingKey` → 始终参与（缺省是"显示"，与其余开关的默认值同源）。
- * - 声明了但不是布尔开关键 → 同样按显示处理：拼错的键不该让一个状态整块消失。
- */
-export function facetVisibleBySettings(settings: ResolvedBadgeSettings, settingKey: string | undefined): boolean {
-  if (settingKey === undefined) return true
-  const value = settings[settingKey as keyof ResolvedBadgeSettings]
-  return typeof value === 'boolean' ? value : true
-}
 
 /** 标准 props 源的结构面（与 `HostObservable<ResolvedBadgeSettings>` 兼容）。 */
 export interface BadgeSettingsSource {
@@ -98,8 +84,6 @@ export const DEFAULT_BADGE_SETTINGS: ResolvedBadgeSettings = Object.freeze({
   showCompletedInBadge: true,
   showRunningInBadge: true,
   showPendingInBadge: true,
-  showScheduledInBadge: true,
-  showWaitingReviewInBadge: true,
   showHoverDetails: true,
   countThreshold: 2,
 })
@@ -110,8 +94,6 @@ function settingsEqual(a: ResolvedBadgeSettings, b: ResolvedBadgeSettings): bool
     a.showCompletedInBadge === b.showCompletedInBadge &&
     a.showRunningInBadge === b.showRunningInBadge &&
     a.showPendingInBadge === b.showPendingInBadge &&
-    a.showScheduledInBadge === b.showScheduledInBadge &&
-    a.showWaitingReviewInBadge === b.showWaitingReviewInBadge &&
     a.showHoverDetails === b.showHoverDetails &&
     a.countThreshold === b.countThreshold
   )
@@ -134,8 +116,6 @@ function resolveFromSnapshot(snap: SettingsSnapshotLike | undefined): ResolvedBa
     showCompletedInBadge: getBool('showCompletedInBadge', true),
     showRunningInBadge: getBool('showRunningInBadge', true),
     showPendingInBadge: getBool('showPendingInBadge', true),
-    showScheduledInBadge: getBool('showScheduledInBadge', true),
-    showWaitingReviewInBadge: getBool('showWaitingReviewInBadge', true),
     showHoverDetails: getBool('showHoverDetails', true),
     countThreshold: getNumber('countThreshold', 2),
   }

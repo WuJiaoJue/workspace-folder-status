@@ -66,12 +66,14 @@
 | `showRunningInBadge` | `true` | 折叠徽标是否显示「进行中」转圈 |
 | `showPendingInBadge` | `true` | 折叠徽标是否显示「待审批 / 待评审 / 待回答」黄点 |
 | `showCompletedInBadge` | `true` | 折叠徽标是否显示「已完成」绿点 |
-| `showScheduledInBadge` | `true` | 折叠徽标是否显示「定时任务」时钟图标（数据来自 dsh-later） |
-| `showWaitingReviewInBadge` | `true` | 折叠徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch） |
 | `showHoverDetails` | `true` | 悬停卡是否显示聚合状态明细行 |
 | `countThreshold` | `2` | 徽标数字显示阈值：数量 >= 此值时才显示数字（默认 2，即 count=1 时省略——点已表达"有东西在发生"；设为 1 则始终显示） |
 
-按状态关掉后，对应的来源完全退出折叠行的聚合提示——不画点/图标、不计入徽标数字、不进悬停明细、不参与「是否显示徽标」的判断。**会话行自身的状态点不受影响**：那是行级状态，不是分组提示。`showHoverDetails` 关闭后，悬停卡只显示标题、路径与创建时间。
+按状态关掉后，对应档位完全退出折叠行的聚合提示——不画点/图标、不计入徽标数字、不进悬停明细、不参与「是否显示徽标」的判断。**会话行自身的状态点不受影响**：那是行级状态，不是分组提示。`showHoverDetails` 关闭后，悬停卡只显示标题、路径与创建时间。
+
+**外部来源（如「等待评审」「定时任务」）在这一页没有开关**，这是有意的：本插件不认识任何具体来源，所以配置面里也不该有别人家的域名与图标形状。要关某个来源，去**那个插件自己**的设置卡片；它关掉时不注册 facet，徽标自然就没有那一格。详见 [`docs/facet-protocol.md`](docs/facet-protocol.md) 的「显隐归谁」。
+
+> ⚠️ 本次起 `showScheduledInBadge` / `showWaitingReviewInBadge` 两个字段已删除（它们曾替 dsh-later / dsh-gitea-dispatch 写死名字与图标形状）。profile 里残留的旧值不再被读取，等同回到默认「显示」。
 
 点「保存」后即时生效，无需刷新；设置由宿主写进 profile patch 的 `dsh-group-status` 条目 `config`，刷新页面后仍在。设置面读不到时（例如宿主未提供设置服务）回落为默认「显示」，与 schema 默认值同源——读不到配置不等于用户关掉了。
 
@@ -102,7 +104,7 @@ const unregister = gs?.registerGroupStatusFacet?.({
   subscribe: store.subscribe,           // 外部存储面，不是 React hook
   getSnapshot: store.getSnapshot,
   fold: (snapshot, sessionIds, now) => ({ count, tone, pulse, data }),
-  merge, label, renderIcon, settingKey, order,   // 全部可选
+  merge, label, renderIcon, order,             // 全部可选
 })
 ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 ```
