@@ -16,13 +16,17 @@ import {
 
 const ready = (value: unknown): SettingsSnapshotLike => ({ status: 'ready', value })
 
-/** 默认设置（7 字段）。 */
+/**
+ * 默认设置（5 字段）。
+ *
+ * ⚠️ 这里**只有本插件自己的语义**。曾有 `showScheduledInBadge` /
+ * `showWaitingReviewInBadge` 两个字段替 dsh-later / dsh-gitea-dispatch 写死，已删除；
+ * 外部来源的显隐归来源自己（不注册就是不显示）。
+ */
 const DEFAULTS = {
   showCompletedInBadge: true,
   showRunningInBadge: true,
   showPendingInBadge: true,
-  showScheduledInBadge: true,
-  showWaitingReviewInBadge: true,
   showHoverDetails: true,
   countThreshold: 2,
 }
@@ -57,12 +61,19 @@ describe('resolveBadgeSettings', () => {
     expect(resolveBadgeSettings(ready({ showPendingInBadge: false }))).toEqual({ ...DEFAULTS, showPendingInBadge: false })
   })
 
-  it('hides scheduled only on an explicit false', () => {
-    expect(resolveBadgeSettings(ready({ showScheduledInBadge: false }))).toEqual({ ...DEFAULTS, showScheduledInBadge: false })
-  })
-
-  it('hides waiting review only on an explicit false', () => {
-    expect(resolveBadgeSettings(ready({ showWaitingReviewInBadge: false }))).toEqual({ ...DEFAULTS, showWaitingReviewInBadge: false })
+  it('已删除的**来源字段**不再被读取：profile 里的旧值一律忽略，且不出现在结果里', () => {
+    // 这两个字段曾替 dsh-later / dsh-gitea-dispatch 写死名字与图标形状，与本插件
+    // 「不认识任何来源」矛盾，已删。删字段是破坏性配置变更：旧值不再被读，等同回到
+    // 默认"显示"。这条用例钉住两件事——
+    //   1. 旧键**不会**被静默当成某个仍然存在的开关（那会让一个来源凭空消失）；
+    //   2. 结果对象里**不再有**这两个键（否则消费方以为还能读它）。
+    const stale = resolveBadgeSettings(ready({
+      showScheduledInBadge: false,
+      showWaitingReviewInBadge: false,
+    }))
+    expect(stale).toEqual(DEFAULTS)
+    expect(stale).not.toHaveProperty('showScheduledInBadge')
+    expect(stale).not.toHaveProperty('showWaitingReviewInBadge')
   })
 
   it('hides hover details only on an explicit false', () => {

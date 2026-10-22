@@ -25,9 +25,9 @@ const t = ((key: string, options?: Record<string, string | number>): string => {
   return template.replace(/\{(\w+)\}/g, (all, name: string) => String(options[name] ?? all))
 }) as never
 
+/** 本插件自己的档位全开；外部来源没有档位可开（登记即显示）。 */
 const ALL_ON = {
   showPendingInBadge: true, showRunningInBadge: true, showCompletedInBadge: true,
-  showScheduledInBadge: true, showWaitingReviewInBadge: true,
   showHoverDetails: true, countThreshold: 2,
 } as const
 

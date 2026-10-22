@@ -35,13 +35,13 @@
 | 8 | `package.json` | `dsh.client.external: ["dsh-later", "dsh-gitea-dispatch"]`；`icon` 字段；`test` / `test:node` / `test:spec` / `test:watch` 脚本与测试用 devDependencies；`@deepseek-ai/schemastery` 依赖（宿主侧 `Config` 用） |
 | 9 | `vitest.config.ts`、`tests/support/`、`tests/group-status.client.spec.ts` | **本仓库新增**：让上游 spec 在独立仓库可跑（见下节），加一份属于本包的折叠聚合 spec |
 | 10 | `tests/cross-plugin-summary.node.test.mjs` | **本仓库新增**：模板模块的 12 条 `node --test` 用例（import 编译产物 `lib/types/client/cross-plugin-summary.js`，所以 `test:node` 先跑 `types`） |
-| 11 | `src/index.ts` — `name` / `Config` / `apply()` | **本仓库新增**：上游宿主侧是空 `apply()`；这里加 `Config`（schemastery `.volatile()`，7 个字段：5 个按状态显隐 + 悬停明细 + 数字样式）供宿主投影成设置页。这是宿主侧唯一的面，不承载行为 |
+| 11 | `src/index.ts` — `name` / `Config` / `apply()` | **本仓库新增**：上游宿主侧是空 `apply()`；这里加 `Config`（schemastery `.volatile()`，5 个字段：3 个按状态显隐 + 悬停明细 + 数字样式）供宿主投影成设置页。这是宿主侧唯一的面，不承载行为。⚠️ **只允许出现本插件自己的语义**：曾有 `showScheduledInBadge` / `showWaitingReviewInBadge` 两个替别人家写死的字段，已删除（外部来源的显隐归来源自己，见 `docs/facet-protocol.md`「显隐归谁」） |
 | 12 | `src/client/badge-settings.ts` | **本仓库新增文件**（上游没有）：设置面快照 → 标准 props 源的适配、派生与引用稳定记忆 |
 | 13 | `src/client/index.ts` — `ConfigFormsLike` / `createBadgeSettingsSource()` / `ctx.inject(['configForms'], …)` / `GlobalStandardProps.useBadgeSettings` | 挂一个**恒在**的 `useBadgeSettings` 标准 props 源，再非阻塞地等 `configForms` 就绪并推入快照。寻址键是**条目 id**（`dsh-group-status`），不是 settings namespace；同一块里再用 `forms.whileServed([ENTRY_ID], …)` 把下面的配置卡片注册进 `plugins.bundle.config` |
 | 14 | `src/client/rows/Rows.tsx` — `ProjectRowItem.settings` / `groupLiveBadge(group, t, settings)` | 按设置决定各来源是否画点/图标、是否计入数字、是否参与「显示徽标」判断 |
 | 15 | `src/client/rows/WorkspaceBrowser.tsx` — `SessionTreeProps` 增 `useBadgeSettings`、`ProjectRowItem` 增 `settings` | 把设置 hook 从浏览器根透传到折叠行（完整 `ResolvedBadgeSettings` 对象，不再是单个布尔） |
 | 16 | `tests/badge-settings.client.spec.ts` | **本仓库新增**：解析与源契约用例（显式 false 才隐藏、引用稳定、无关变更不通知、设置面收回回落默认） |
-| 17 | `src/client/badge-field.ts` | **本仓库新增**：7 个布尔字段的官方字段规格（`SettingsFieldSpec`：`format` 缺失值读成默认、`parse` 只收 `'true'`/`'false'`，其余草稿判非法挡住保存）。纯逻辑、无 React 依赖，单独可测 |
+| 17 | `src/client/badge-field.ts` | **本仓库新增**：卡片字段的官方规格（`SettingsFieldSpec`：`format` 缺失值读成默认、`parse` 只收 `'true'`/`'false'`，其余草稿判非法挡住保存）。纯逻辑、无 React 依赖，单独可测。⚠️ `ALL_BADGE_FIELDS` 的**顺序就是徽标画点顺序**（单一事实来源），新增档位请按 `rows/GroupBadge.tsx` 的顺序插入 |
 | 18 | `src/client/BadgeSettingsCard.tsx` + `BadgeSettingsCard.module.css` | **本仓库新增**：插件详情页（插件 → dsh-group-status）的配置卡片。**为什么必需**：宿主只把 `Config` 投影成 `configForms` 表音，页面要插件自己注册卡片才画得出来——没有它 README「设置项」描述的 UI 不存在。外观与交互**不自造**：框架用官方 `SettingsForm`、草稿与保存用官方 `SettingsFormModel`、开关用官方 `Switch`（与「设置 → 内置插件 → 子智能体」同一套）；CSS 只写 section/heading 与开关行，取值逐条照抄 `ui-settings-subagent` 的 `SubagentCard.module.css` / `SubagentModelSelectionFields.module.css` |
 | 19 | `src/client/plugin-manager-slot.d.ts` | **本仓库新增**：`plugins.bundle.config` 的本地 `SlotMap` 声明（按包名寻址）。手写而非 `import type` 插件管理器：该包不进 devDependencies；若哪天进了，删掉本文件 |
 | 20 | `tests/badge-settings-card.client.spec.tsx` | **本仓库新增**：字段规格用真实现测；卡片接线用契约等价桩（官方 `SettingsForm` / `SettingsFormModel` / `Switch`）测——那个包的 bundle 依赖宿主应用预载的整棵依赖闭包，独立仓库跑不起来（见 `vitest.config.ts` 头部） |
@@ -129,10 +129,10 @@
 1. 找一个有进行中 / 待审批会话的分组 → 收起 → 文件夹名后出现徽标；
 2. 悬停文件夹行 → 明细行出现，文案与徽标 `aria-label` 一致；
 3. 展开分组 → 徽标消失，子行自带状态；
-4. 组内有定时任务时出现时钟图标（紫 / 橙 / 红）；有等待评审时出现沙漏图标（琥珀 / 红），且明细与 `aria-label` 带上 `#PR` 与剩余时长；窗口到期后文案变成「等待评审（已超时）」，**徽标不闪动**（与 dsh-gitea-dispatch 自己那条会话行的静止图标一致）；
-5. 临时卸掉 dsh-later / dsh-gitea-dispatch → 图标消失但**不报错**、不空转；
+4. 组内有定时任务 / 等待评审时，徽标各多一枚图标，且明细与 `aria-label` 带上 `#PR` 与剩余时长；等待窗口到期后 `aria-label` 换成该来源的超窗文案（当前是「已超窗，仍在等待」），**徽标不闪动**（`pulse: false` 由来源声明，与 dsh-gitea-dispatch 那条会话行的静止图标同一口径）。⚠️ **别在这里核对形状与颜色**：图标由来源自己的 `renderIcon` 交出，形状还跟随该插件自己的风格档位（dsh-gitea-dispatch 的 `waitingIconStyle` 三档），本插件无权决定，写死成"时钟/沙漏"的清单会指着一个不存在的形状验收；
+5. 临时卸掉 dsh-later / dsh-gitea-dispatch → 图标消失但**不报错**、不空转；本插件的设置卡片上**不应出现**任何提供方名字或它的图标名（回归用例：`tests/badge-settings-card.client.spec.tsx`）；
 6. 提供方不导出 `summarizeWaitingGroup()`（旧版）时，徽标走本仓库的等价折叠，数字/色档/文案与新版一致（`tests/group-status.client.spec.ts` 锁住）；
-7. **设置项**：侧栏 **插件** → dsh-group-status（bundle 详情页，描述与「包含的组件」之间）→ 卡片分 3 个 section（折叠徽标 5 个开关 / 悬停明细 1 个开关 / 数字显示 1 个开关）→ 关掉某个开关 → 保存 → 对应来源的点/图标从徽标与悬停明细中消失、数字相应减少；再打开 → 回来。改完**无需刷新**；刷新页面后设置仍在（宿主把它写进 profile patch 的 `dsh-group-status` 条目 `config`）。表单外观应与「插件 → 官方 → 子智能体」同款：section 标题 13px/600、开关行 label 左 + switch 右、说明 12px 次级灰度、保存按钮在内容列左缘（官方 `SettingsForm` 的定位）；
+7. **设置项**：侧栏 **插件** → dsh-group-status（bundle 详情页，描述与「包含的组件」之间）→ 卡片分 3 个 section（折叠徽标 **3** 个开关，顺序与徽标画点一致：待审批 → 进行中 → 已完成 / 悬停明细 1 个开关 / 数字显示 1 个数字）→ 关掉某个开关 → 保存 → 对应档位的点从徽标与悬停明细中消失、数字相应减少；再打开 → 回来。**外部来源在这一页没有开关**（显隐归来源自己：不注册就是不显示）。改完**无需刷新**；刷新页面后设置仍在（宿主把它写进 profile patch 的 `dsh-group-status` 条目 `config`）。表单外观应与「插件 → 官方 → 子智能体」同款：section 标题 13px/600、开关行 label 左 + switch 右、说明 12px 次级灰度、保存按钮在内容列左缘（官方 `SettingsForm` 的定位）；
 8. **设置面缺失时**（把 `Config` 临时去掉再构建）→ 插件照常加载，徽标按默认「显示已完成」；console 无 `cannot get property … without inject` 一类报错；
 9. 浏览器 console 无本插件错误；
 10. 中 / 英界面语言切换后文案跟随。

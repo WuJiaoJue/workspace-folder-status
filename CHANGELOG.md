@@ -6,6 +6,25 @@
 
 ## 未发布
 
+- **breaking** 删除设置项 `showScheduledInBadge` 与 `showWaitingReviewInBadge`：**外部来源的显隐不再由本插件管**。
+  这两个字段把别人家的域名（定时任务 / 等待评审）、来源名（dsh-later / dsh-gitea-dispatch）连图标形状
+  （"时钟" / "沙漏"）全都写死在**消费方**的 `Config`、设置卡片与文案里，与本插件「不认识任何具体来源」的
+  立身之本直接矛盾 —— facet 协议把适配方向翻正了，配置面却没跟着翻。而且它**已经是错的**：dsh-gitea-dispatch
+  自其 #60 起让徽标跟随自己的 `waitingIconStyle`，三档里两档不是沙漏，卡片却仍在承诺"沙漏"；对方没装时，
+  那句"关闭后不再画"更是空话。
+  现在的规则只有一条：**登记即显示，不注册即不显示**。要给用户一个"关掉它"的开关，请加在**你自己的**
+  配置卡片里。协议成员 `settingKey` 同时废弃（v1 仍接受、不报错，但本插件不再读取）。
+  **升级影响**：profile 里残留的这两个旧值不再被读取，等同回到默认「显示」（默认全开，最坏情况是某个来源
+  重新出现，不会留下坏数据）。曾考虑的另一种收口（消费方保留 `disabledFacets: string[]` + 卡片遍历登记面）
+  只是把来源名从文案换成 id，机制仍长在消费方身上，故未采用；取舍过程写进 `docs/facet-protocol.md`。
+- **refactor** 徽标设置卡片的开关顺序改为**与徽标画点一致**（待审批 → 进行中 → 已完成）。此前是
+  进行中 → 待审批 → 已完成，而徽标与悬停明细都是待审批在前；用户的操作场景恰是"我看到徽标第 N 个图标，
+  想关掉它"。同一族毛病 #25① 已在点行与明细之间修过一次，卡片是当时漏掉的第三个面。单一事实来源是
+  `badge-field.ts` 的 `ALL_BADGE_FIELDS`，并由 `tests/badge-settings-card.client.spec.tsx` 钉住
+  （含"卡片文案里不得出现任何提供方名字与形状词"）。
+- **refactor** 删除 `facetVisibleBySettings` 与 `facet-visibility.ts`；`useVisibleFacets` 更名
+  `useRegisteredFacets`（它不再筛任何东西，只负责"订阅 + 读登记面"，见下一条目为何必须收进一个 hook）。
+
 - **fix** 提供方**晚于首渲染**注册的状态源永远进不了折叠徽标：`WorkspaceBrowser` 订阅了
   facet 存储，却把 `useSyncExternalStore` 的返回值丢掉，`useMemo` 的依赖里只有设置项——
   于是登记面变化只换来一次重渲染，渲染算的仍是**上一次**的登记面。表现是「徽标少一家、

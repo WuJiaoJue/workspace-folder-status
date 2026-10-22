@@ -92,11 +92,11 @@ export function BadgeSettingsCard({ scope, t }: BadgeSettingsCardProps): JSX.Ele
     >
       <section className={css.section} aria-labelledby={badgeSectionId}>
         <h3 className={css.heading} id={badgeSectionId}>{t('settings.badge.section')}</h3>
-        <ToggleRow field={BADGE_FIELDS.showRunningInBadge} text={fieldText(BADGE_FIELDS.showRunningInBadge)} label={t('settings.badge.showRunning')} hint={t('settings.badge.showRunningHint')} state={state} actions={actions} />
+        {/* 顺序 = 徽标画点顺序（待审批 → 进行中 → 已完成）。外部来源不在这里：它们的
+            显隐归来源自己（不注册就是不显示），本插件卡片上不该出现别人家的名字。 */}
         <ToggleRow field={BADGE_FIELDS.showPendingInBadge} text={fieldText(BADGE_FIELDS.showPendingInBadge)} label={t('settings.badge.showPending')} hint={t('settings.badge.showPendingHint')} state={state} actions={actions} />
+        <ToggleRow field={BADGE_FIELDS.showRunningInBadge} text={fieldText(BADGE_FIELDS.showRunningInBadge)} label={t('settings.badge.showRunning')} hint={t('settings.badge.showRunningHint')} state={state} actions={actions} />
         <ToggleRow field={BADGE_FIELDS.showCompletedInBadge} text={fieldText(BADGE_FIELDS.showCompletedInBadge)} label={t('settings.badge.showCompleted')} hint={t('settings.badge.showCompletedHint')} state={state} actions={actions} />
-        <ToggleRow field={BADGE_FIELDS.showScheduledInBadge} text={fieldText(BADGE_FIELDS.showScheduledInBadge)} label={t('settings.badge.showScheduled')} hint={t('settings.badge.showScheduledHint')} state={state} actions={actions} />
-        <ToggleRow field={BADGE_FIELDS.showWaitingReviewInBadge} text={fieldText(BADGE_FIELDS.showWaitingReviewInBadge)} label={t('settings.badge.showWaitingReview')} hint={t('settings.badge.showWaitingReviewHint')} state={state} actions={actions} />
       </section>
       <section className={css.section} aria-labelledby={hoverSectionId}>
         <h3 className={css.heading} id={hoverSectionId}>{t('settings.hover.section')}</h3>

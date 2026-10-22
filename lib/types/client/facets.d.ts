@@ -99,7 +99,7 @@ export interface GroupStatusFacet<Input = unknown, Data = unknown> {
     readonly protocol: number;
     /**
      * 全局唯一 id，建议 `'<包名>.<状态名>'`（如 `'dsh-gitea-dispatch.waiting-review'`）。
-     * 它同时是 React key、重复注册的判据，以及本插件设置项的挂钩键（{@link settingKey}）。
+     * 它同时是 React key 与重复注册的判据。
      */
     readonly id: string;
     /**
@@ -142,10 +142,20 @@ export interface GroupStatusFacet<Input = unknown, Data = unknown> {
      */
     renderIcon?(fold: FacetFold<Data>, context: FacetRenderContext): ReactNode;
     /**
-     * 受本插件哪个设置项开关控制（如 `'showWaitingReviewInBadge'`）。
+     * **已废弃（v1 保留字段，本插件不再读取）**。
      *
-     * 省略 = 不受开关控制，始终参与。开关的**语义**（关掉意味着什么）由本插件判定，
-     * provider 只声明挂钩键。
+     * 原语义是"我受本插件哪个布尔开关管"（如 `'showWaitingReviewInBadge'`）。但那等于把
+     * 别人家的域名与图标形状写进本插件的配置面，与「本插件不认识任何具体来源」直接矛盾，
+     * 那两个字段也已经从 `Config` 删除。
+     *
+     * 现在的规则只有一条：**登记即显示，不注册即不显示**。要给用户一个"关掉它"的开关，
+     * 请加在**你自己的**配置卡片里，关掉时不注册 facet —— 显隐是来源自己的产品决定，
+     * 只有你知道关掉它意味着什么。
+     *
+     * 保留而不删除是为了让已接入的提供方**不必同步改版本**：填了它不会报错，也**不会**
+     * 再影响任何显示。看到它请直接从你的 facet 里删掉。
+     *
+     * @deprecated 本插件不再读取；显隐由 provider 决定是否注册。
      */
     settingKey?: string;
     /**

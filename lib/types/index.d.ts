@@ -23,6 +23,13 @@ export declare const name = "dsh-group-status";
  * 读取同一份文档，改完即时生效、无需刷新。
  *
  * 全部可选且带默认值：未配置时即开箱即用（所有来源默认显示）。
+ *
+ * ⚠️ **这里只允许出现本插件自己的语义**。历史上曾有 `showScheduledInBadge` /
+ * `showWaitingReviewInBadge` 两个字段，名字与图标形状都替别人家插件写死（定时任务来自
+ * dsh-later、等待评审来自 dsh-gitea-dispatch）—— 与本插件「不认识任何具体来源」的立身
+ * 之本直接矛盾。外部来源的显隐现在归**来源自己**：它想被关掉就不注册 facet（协议文档
+ * 「显隐归谁」一节）。删字段是一次**破坏性配置变更**：旧值不再被读取，等同回到默认
+ * "显示"（默认全开，所以最坏情况是"某个来源重新出现"，不会留下坏数据）。
  */
 export declare const Config: Schema<NoInfer<Schemastery.ObjectS<NoInfer<{
     /**
@@ -36,10 +43,6 @@ export declare const Config: Schema<NoInfer<Schemastery.ObjectS<NoInfer<{
     showRunningInBadge: Schema<boolean, boolean, "defined">;
     /** 折叠分组徽标是否显示「待审批」黄点（approval / plan-review / question）。 */
     showPendingInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）。 */
-    showScheduledInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch）。 */
-    showWaitingReviewInBadge: Schema<boolean, boolean, "defined">;
     /** 悬停卡里是否显示聚合明细行（"1 等待回答 · 1 进行中…"）。 */
     showHoverDetails: Schema<boolean, boolean, "defined">;
     /** 徽标数字显示阈值：数量 >= 此值时才显示数字（默认 2，即 count=1 时省略）。 */
@@ -56,10 +59,6 @@ export declare const Config: Schema<NoInfer<Schemastery.ObjectS<NoInfer<{
     showRunningInBadge: Schema<boolean, boolean, "defined">;
     /** 折叠分组徽标是否显示「待审批」黄点（approval / plan-review / question）。 */
     showPendingInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「定时任务」时钟图标（数据来自 dsh-later）。 */
-    showScheduledInBadge: Schema<boolean, boolean, "defined">;
-    /** 折叠分组徽标是否显示「等待评审」沙漏图标（数据来自 dsh-gitea-dispatch）。 */
-    showWaitingReviewInBadge: Schema<boolean, boolean, "defined">;
     /** 悬停卡里是否显示聚合明细行（"1 等待回答 · 1 进行中…"）。 */
     showHoverDetails: Schema<boolean, boolean, "defined">;
     /** 徽标数字显示阈值：数量 >= 此值时才显示数字（默认 2，即 count=1 时省略）。 */
@@ -70,8 +69,6 @@ export interface Config {
     showCompletedInBadge: boolean;
     showRunningInBadge: boolean;
     showPendingInBadge: boolean;
-    showScheduledInBadge: boolean;
-    showWaitingReviewInBadge: boolean;
     showHoverDetails: boolean;
     countThreshold: number;
 }

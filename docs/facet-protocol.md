@@ -28,7 +28,6 @@ const unregister = groupStatus?.registerGroupStatusFacet?.({
   merge: (a, b) => ({ ... }),                                // 可选，多层文件夹怎么合并
   label: (fold, { now }) => `${fold.count} 在等评审`,          // 可选，进 aria-label 与明细
   renderIcon: (fold) => createElement('svg', { /* ... */ }),  // 可选，图标
-  settingKey: 'showWaitingReviewInBadge',                    // 可选，受本插件哪个开关管
   order: 20,                                                 // 可选，图标排列顺序
 })
 
@@ -83,8 +82,33 @@ ctx.effect(() => () => unregister?.(), 'my-plugin: group status facet')
 | `merge(a, b)` | 否 | 合并同名 facet 在两层的折果。不提供时用缺省规则（见下）。 |
 | `label(fold, { now })` | 否 | 进徽标 `aria-label` / `title` 与悬停明细的那句话。返回空串按"我没有文案"处理。 |
 | `renderIcon(fold, { now })` | 否 | React 元素，自带配色。 |
-| `settingKey` | 否 | 受本插件哪个开关控制。省略 = 始终参与。 |
+| ~~`settingKey`~~ | — | **已废弃**：v1 仍接受（不报错），但本插件**不再读取**。显隐见下一节。 |
 | `order` | 否 | 图标排列顺序，升序。**缺省排在所有声明过 `order` 的来源之后**，彼此按注册先后。 |
+
+## 显隐归谁：登记即显示，关掉就是不注册
+
+**外部来源的开关归来源自己，不归本插件。** 想让用户能关掉你的状态，就在**你自己的**配置
+卡片里加一项（两家本来就都有自己的卡片），关掉时**不注册 facet** —— 只有你知道"关掉它"
+意味着什么，也只有你的卡片知道该把它叫什么。
+
+这条是从反面学来的。本插件曾有两个字段
+`showScheduledInBadge` / `showWaitingReviewInBadge`，名字、图标形状（"时钟"、"沙漏"）和
+来源名（dsh-later / dsh-gitea-dispatch）全都写死在**消费方**的 `Config`、设置卡片与文案里：
+
+- 与「本插件不认识任何具体来源」直接矛盾 —— 协议把方向翻正了，配置面却没跟着翻；
+- 而且**已经是错的**：dsh-gitea-dispatch 自其 #60 起让徽标跟随自己的 `waitingIconStyle`，
+  三档里两档不是沙漏，卡片却仍在承诺"沙漏"；
+- 还在承诺一件可能不存在的事：对方没装时，那句"关闭后不再画"是空的。
+
+两个字段已删除。这是一次**破坏性配置变更**：profile 里残留的旧布尔不再被读取，等同回到
+默认"显示"（默认全开，最坏情况是某个来源重新出现，不会留下坏数据）。回归用例见
+`tests/badge-settings.client.spec.ts`（旧值一律忽略）与
+`tests/use-registered-facets.client.spec.tsx`（废弃的 `settingKey` 不再筛掉任何来源）。
+
+> 曾考虑的另一种收口：本插件保留一个与来源无关的 `disabledFacets: string[]`，设置卡片
+> 遍历登记面渲染，协议再加一个 `settingName` 给来源自述标题。它保住"一站式面板"，但
+> 机制仍长在消费方身上 —— 只是把来源名从文案换成了 id。既然原则是消费方不该有任何
+> 生产方的代码，连"替生产方存开关"这件事也不该有，所以选了现在这条。
 
 ### `FacetFold`
 
@@ -187,24 +211,14 @@ id 而徽标**没有**，问题就在消费侧（渲染/设置过滤）；表里
 
 ## 已知取舍
 
-- **新 facet 默认没有用户开关**。`settingKey` 只能挂到本插件已有的布尔开关上。两条路：
-
-  - **省略 `settingKey`（推荐）**：你的来源始终参与徽标，本插件**零改动**。缺省是"显示"，
-    与其余开关的默认值同源，所以这不是降级路径，而是常态路径。
-  - **要一个独立开关**：需要在**本插件**加一个布尔设置项。成本不是"一处声明"，实测是
-    **14 个改动点、5 个文件**（10 处代码 + 4 条文案）：`src/index.ts`（schema 字段 +
-    `Config` 接口）2 处、`src/client/badge-settings.ts`（接口 + 默认值 + 相等判断 +
-    resolve）4 处、`src/client/badge-field.ts`（`BADGE_FIELDS` + 字段 spec +
-    `ALL_BADGE_FIELDS`）3 处、`src/client/BadgeSettingsCard.tsx`（一行 `<ToggleRow>`）
-    1 处、`src/client/locales.ts`（zh/en 各一条 label + hint）4 条字符串。
-
-  这个成本是**已知设计债**，根因是 `Config` 在服务端静态声明、而 facet 在客户端运行时注册，
-  两边永远错开一个时序。收口的方向是把这 N 个布尔换成一个泛化字段
-  （`facetToggles: Schema.dict(string, boolean)`，声明一次后不再改动，设置卡片改为遍历
-  registry 渲染），读取路径其实已经动态了——`facetVisibleBySettings` 收的是 `string`、
-  运行时查表、未知键回落 true，且这两个既有开关在全仓库只有 `visibleFacets` 一个功能读取点。
-  尚未实施是因为它需要协议新增一个可选的 `settingName`（设置项标题不能复用 `label`，那是
-  状态句子），并要求对已持久化的旧布尔做迁移；在出现第三个来源之前，这笔成本不划算。
+- **本插件不提供"关掉某个来源"的开关**，这是有意的（见上一节「显隐归谁」）。历史上它
+  提供过：两个布尔开关，实测成本 **14 个改动点、5 个文件**（`src/index.ts` 2 处、
+  `badge-settings.ts` 4 处、`badge-field.ts` 3 处、`BadgeSettingsCard.tsx` 1 处、
+  `locales.ts` 4 条字符串），而根因是 `Config` 在服务端静态声明、facet 在客户端运行时
+  注册，两边永远错开一个时序。当时把这笔账记成"已知设计债"，计划的收口是换成一个泛化
+  字典 + 卡片遍历登记面，并以"第三个来源出现之前不划算"为由搁置。
+  **那个方向是错的**：它只是把来源名从文案换成 id，机制仍然长在消费方身上。现在两个
+  字段连同整条读取路径一起删除，成本归零，来源要开关请开在自己的卡片里。
 - **宿主会话状态在明细里只有 warning / ongoing / done 三档点**（这三档是宿主的语义，本
   插件无权增减）。**外部来源不适用这条限制**：`renderIcon` 交出的图标在徽标与悬停明细两
   处都会渲染，所以 `tone: 'error'` 由你自己的图标色档表达，不靠文案自救（#24）。没交
