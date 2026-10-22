@@ -34,7 +34,8 @@ import { execFileSync } from 'node:child_process';
 
 const FEATURE_HEADINGS = ['## 功能', '## 特性一览', '## Features'];
 /** 分组顺序照 later：feat / fix 在前，表外的类型排最后并按名字排序。 */
-const TYPE_ORDER = ['feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'chore', 'build', 'ci', 'style'];
+// breaking 放最前：它是用户最需要先看到的；其余照 later 的习惯 feat/fix 在前。
+const TYPE_ORDER = ['breaking', 'feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'chore', 'build', 'ci', 'style'];
 
 const [rawVer, ...flags] = process.argv.slice(2);
 const ver = String(rawVer || '').replace(/^v/, '');
