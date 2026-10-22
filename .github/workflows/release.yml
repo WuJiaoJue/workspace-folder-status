@@ -66,6 +66,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          # 容器作业（GitHub 的 `container:`）里工作区属主可能与执行用户不同，
+          # git 会因“dubious ownership”拒绝操作 → 实测 GitHub 侧两个 job 全红在这一步，
+          # 而 Gitea（act 直跑）没有这个约束。先声明安全目录。
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
           git init -q .
           git remote add origin "${GH_SERVER}/${GH_REPO}.git"
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
