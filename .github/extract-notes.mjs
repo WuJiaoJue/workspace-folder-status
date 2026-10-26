@@ -111,8 +111,27 @@ const stripType = (item) => item.replace(/^-\s+\*\*[a-zA-Z]+\*\*\s*/, '- ');
  * 半角 `:` 切并在外面重建加粗，把句子压坏了，已撤销。
  */
 function releaseLine(item) {
-  const line = item
-    .split('\n')[0]
+  // 先把条目**自己的段落**拼起来：CHANGELOG 里的条目常常折行（续行缩进两格），
+  // 只取首行会把句子从中间切断 —— dsh-later 1.8.0 的 breaking 条就断在「…的」，
+  // 发布出去成了一条读不通的句子。嵌套子条目（缩进的 `- ` 论证）仍然丢弃。
+  // 首行 + 其后的折行续行；**遇到第一个嵌套子条目（缩进的 `- `）就停** ——
+  // 子条目连同它自己的续行都是论证，不进 Release。
+  const paraLines = [];
+  for (const l of item.split('\n')) {
+    if (/^\s+-\s/.test(l)) break;
+    paraLines.push(l);
+  }
+  // 折行拼接：中文与中文之间不插空格（否则「…的 类型面…」这种断裂式空格会进 Release），
+  // 其余情况按空格拼。
+  const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
+  const para = paraLines.map((l) => l.trim()).filter(Boolean).reduce((acc, cur) => {
+    if (!acc) return cur;
+    // 边界字符要跳过强调/代码符号：续行常以 `**` 开头，直接比会误判成"非中文"
+    const a = acc.replace(/[*_~`]+$/, '').slice(-1);
+    const b = cur.replace(/^[*_~`]+/, '')[0] ?? '';
+    return acc + (CJK.test(a) && CJK.test(b) ? '' : ' ') + cur;
+  }, '');
+  const line = para
     .replace(/^-\s+(?:\*\*[a-zA-Z]+\*\*\s*)?/, '')
     .replace(/\s+/g, ' ')
     .trim();
