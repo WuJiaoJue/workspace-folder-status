@@ -40,6 +40,20 @@
   改为同时断言**引用**就是哨兵；`cross-plugin-summary` 补了「store 迟到注册后 hook 自愈」。
   每条新用例都做过反向验证：改坏被保护的行为即失败，改回即通过。
 
+- **fix** 把客户端运行时依赖**逐条写进 `peerDependencies`**（12 个 `@deepseek-ai/dsh-*`，
+  范围 `^0.2.1-rc.2` = `engines.dsh` 下界），闭合"声明说不支持、内核照样装"的洞。
+  **为什么必须这么做**：≤0.2.0 的内核**不读 `engines.dsh`**，只按 `dsh-*` peer 的范围判兼容
+  （0.2.1 起反过来——`engines.dsh` 单独决定，peer 不参与判定）。此前 peer 里只有
+  `@deepseek-ai/cordis`，于是 0.2.0 把本插件判成"兼容"并装载；而那一代没发布
+  `@deepseek-ai/dsh-api-remote-access`，客户端 `inject` 的 `remoteAccess` 永远拿不到 →
+  fiber 永久 pending → `uiWorkspace` 不再被提供 → **`ui-sidebar` / `ui-conversation` /
+  `ui-chat` 等 12 条一起不激活，整页 "Failed to load plugins"，用户失去整个侧栏**。
+  现在 0.2.0-rc.2 实测：内核打印 `skipping profile bundle "dsh-group-status": … peerDependencies {...}`，
+  插件不装载，**控制台 0 错误、宿主自带侧栏照常工作**；而 0.2.1-rc.2 / rc.3 / rc.4 三代
+  `engines.dsh` 命中即返回，peer 不参与判定，仍全部判过、真 GUI 里分区正常渲染。
+  新增用例 `tests/artifacts.node.test.mjs`「每个客户端注入包都声明为 peer，且范围等于
+  `engines.dsh` 的下界」把这条不变量钉住（反向验证：把任一 peer 改成 `*` 即红）。
+
 - **docs** 跨代次验证记录（2026-10-27，`devkit/results/dsh-group-status-cross-kernel-2026-10-27.json`
   与 `devkit/results/screens/`）：0.2.1-rc.2 上 gate / peer / tsc / test / 冷启动装配全绿，
   真 GUI 里分组行、会话行、View options 菜单、扁平列表、搜索命中与无匹配态均正常，

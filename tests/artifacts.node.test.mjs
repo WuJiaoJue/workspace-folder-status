@@ -85,6 +85,26 @@ test('包依赖与 DSH 0.2.1-rc.2 基线一致', () => {
   )
 })
 
+test('每个客户端注入包都声明为 peer，且范围等于 engines.dsh 的下界', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const peers = pkg.peerDependencies ?? {}
+  const inject = pkg.dsh?.client?.inject ?? []
+
+  // 为什么必须逐条声明：**≤0.2.0 的内核不读 engines.dsh**，只按 `@deepseek-ai/dsh*`
+  // peer 的范围判兼容（0.2.1 起才由 engines.dsh 单独决定，且此时 peer 根本不参与判定）。
+  // 只写 engines.dsh 的话，0.2.0 会把本插件判成"兼容"并装进去；而那一代没发布
+  // dsh-api-remote-access，客户端 inject 的 remoteAccess 永远拿不到 → fiber 永久
+  // pending → uiWorkspace 不再被提供 → ui-sidebar / ui-conversation / ui-chat 一起
+  // 不激活。实测 0.2.0-rc.2 真 GUI 是整页 "Failed to load plugins"。
+  const floor = /^>=\s*(\S+)/.exec(String(pkg.engines?.dsh ?? ''))?.[1]
+  assert.ok(floor, 'engines.dsh 必须以下界开头，本用例靠它推导 peer 范围')
+  assert.ok(inject.length > 0, 'dsh.client.inject 不能为空')
+
+  for (const name of inject) {
+    assert.equal(peers[name], `^${floor}`, `${name} 未声明为 peer，或其范围与 engines.dsh 下界不一致`)
+  }
+})
+
 test('每个实现源文件都有对应的 lib/types 产物', () => {
   /** 递归收集 `src/` 下的实现文件（`.ts`/`.tsx`）。手写 `.d.ts` 不产 `.js`，跳过。 */
   const walk = (dir) => {
