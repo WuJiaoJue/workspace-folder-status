@@ -1,30 +1,46 @@
-/** Experimental package identities, publication policy, and retained npm names. */
+/**
+ * Experimental package identities, reduced to the rule this standalone repository
+ * can actually observe.
+ *
+ * The vendored monorepo file carried three more branches: a retained-npm-name
+ * exception table (`packages/experimental/<dir>` → an older published name), a
+ * package-owned record-namespace derivation, and a publication policy keyed on
+ * `packages/experimental/<dir>` directories. None of them can take a meaningful
+ * branch here, so all three are gone:
+ *
+ * - This repository has no `packages/` tree at all, so both directory-keyed
+ *   helpers were unreachable by construction.
+ * - Only two exports have consumers outside this file (`grep -rn` over the repo,
+ *   excluding `node_modules/` and `lib/`): `isExperimentalPackageName`
+ *   (`build/tools/tsdown.client.ts`, `build/tools/bundle-input-isolation.ts`)
+ *   and `hasExperimentalPackageReference` (`bundle-input-isolation.ts`). Nothing
+ *   imported the record-namespace or publication helpers.
+ * - The retained-name table cannot match anything either: those ten npm names
+ *   appear nowhere outside this file, and none of them is installed under
+ *   `node_modules/`, so no bundler input can ever hit one. Keeping it would just
+ *   make a future dependency that happens to share such a name fail with an
+ *   "experimental input" error that no longer explains anything.
+ *
+ * Behaviour is therefore unchanged, which is the point: `bundle-input-isolation.ts`
+ * exits early for an experimental *engine* and throws if an experimental *input*
+ * leaks in, and this repository's own package is not experimental, so its client
+ * bundle takes exactly the same path as before. The surviving rule — the reserved
+ * npm namespace prefix — is the only one with a live meaning: never let a
+ * `@deepseek-ai/dsh-experimental-*` package into a shipped bundle. If a
+ * `packages/experimental/` tree ever lands here, lift the deleted branches back
+ * from the monorepo rather than re-inventing them.
+ */
 
-/** Existing npm names retained by capabilities now housed under experimental/. */
-export const EXPERIMENTAL_PACKAGE_NAME_EXCEPTIONS: Readonly<Record<string, string>> = {
-  'packages/experimental/tool-session-query': '@deepseek-ai/dsh-tool-session-query',
-  'packages/experimental/session-title-all-prompts-llm': '@deepseek-ai/dsh-session-title-all-prompts-llm',
-  'packages/experimental/tool-terminal': '@deepseek-ai/dsh-tool-terminal',
-  'packages/experimental/tool-ralph': '@deepseek-ai/dsh-tool-ralph',
-  'packages/experimental/skill-badge': '@deepseek-ai/dsh-skill-badge',
-  'packages/experimental/hook-protocol': '@deepseek-ai/dsh-hook-protocol',
-  'packages/experimental/hooks-claude-code': '@deepseek-ai/dsh-hooks-claude-code',
-  'packages/experimental/hooks-codex': '@deepseek-ai/dsh-hooks-codex',
-  'packages/experimental/webhook': '@deepseek-ai/dsh-webhook',
-  'packages/experimental/webhook-github': '@deepseek-ai/dsh-webhook-github',
-} satisfies Record<`packages/experimental/${string}`, `@deepseek-ai/dsh-${string}`>
-
-/** npm namespace for experimental packages without retained-name exceptions. */
+/** npm namespace reserved for experimental capabilities. */
 export const EXPERIMENTAL_PACKAGE_NAME_PREFIX = '@deepseek-ai/dsh-experimental-'
-const retainedNames = new Set(Object.values(EXPERIMENTAL_PACKAGE_NAME_EXCEPTIONS))
 
 /**
- * Identify an experimental npm package independently of its installed directory.
+ * Identify an experimental npm package by its name alone.
  * @param name - complete npm package name, without a version or subpath.
- * @returns Whether the name uses the experimental prefix or a retained name.
+ * @returns Whether the name uses the experimental prefix.
  */
 export function isExperimentalPackageName(name: string): boolean {
-  return name.startsWith(EXPERIMENTAL_PACKAGE_NAME_PREFIX) || retainedNames.has(name)
+  return name.startsWith(EXPERIMENTAL_PACKAGE_NAME_PREFIX)
 }
 
 /**
@@ -36,31 +52,4 @@ export function hasExperimentalPackageReference(reference: string): boolean {
   const normalized = reference.replaceAll('\\', '/')
   return [...normalized.matchAll(/(?:^|[/:\u0000])(@deepseek-ai\/[^/@?#:\s]+)(?=$|[/@?#:])/g)]
     .some(([, name]) => name !== undefined && isExperimentalPackageName(name))
-}
-
-/**
- * Derive the package-owned plugin record namespace without changing persisted names.
- * @param name - complete experimental npm package name.
- * @returns Capability suffix, or undefined for a non-experimental name.
- */
-export function experimentalPackageRecordNamespace(name: string): string | undefined {
-  if (!isExperimentalPackageName(name)) return undefined
-  return name.slice(name.startsWith(EXPERIMENTAL_PACKAGE_NAME_PREFIX) ? EXPERIMENTAL_PACKAGE_NAME_PREFIX.length : '@deepseek-ai/dsh-'.length)
-}
-
-/** Experimental packages excluded from public releases and npm baselines. */
-export const PRIVATE_EXPERIMENTAL_PACKAGE_DIRECTORIES: readonly string[] = []
-
-/**
- * Whether an experimental package publishes under the default-public policy.
- * @param directory - repository-relative package directory.
- * @param privateDirectories - experimental directories excluded from publication.
- * @returns Whether the package publishes with the dsh family.
- */
-export function isPublicExperimentalPackageDirectory(
-  directory: string,
-  privateDirectories: readonly string[] = PRIVATE_EXPERIMENTAL_PACKAGE_DIRECTORIES,
-): boolean {
-  return /^packages\/experimental\/[^/]+$/.test(directory)
-    && !privateDirectories.includes(directory)
 }

@@ -29,6 +29,9 @@ export const HOST_STATUS_FACTS = ['completionUnread', 'pendingInteraction'] as c
 /** 宿主实现里那个函数的形状（我们这份 fork 是照它抄的，所以两边可比）。 */
 const VISIBLE_PENDING_KIND = /function visiblePendingKind\s*\([^)]*\)\s*\{\s*switch\s*\([^)]*\)\s*\{([\s\S]*?)\n\s*\}/
 
+/** 函数体里 kind 的写法：宿主产物是 `case "approval":` 这种双引号字面量。 */
+const PENDING_KIND_CASE = /case\s+"([^"]+)"/g
+
 /** 一处契约漂移。 */
 export interface ContractDrift {
   readonly kind: 'kind-set' | 'fact-missing'
@@ -44,23 +47,71 @@ export interface HostContract {
 }
 
 /**
+ * 解析失败时给人看的线索：那个函数名还在不在。名字还在却形状对不上，与整个名字消失，
+ * 是两种完全不同的上游改动，读日志的人该一眼分清。
+ * @param source - 宿主 bundle 文本。
+ */
+function visiblePendingKindHint(source: string): string {
+  if (!source.includes('visiblePendingKind')) {
+    return '源码里连 `visiblePendingKind` 这个名字都没有了（被改名或删掉了）'
+  }
+  // 名字「还在」也可能只是别的前缀把它包住了（`pickVisiblePendingKind`），照样要说清。
+  return '`visiblePendingKind` 这个名字还在，但它不再是 `function visiblePendingKind(…) { switch (…) { … } }` 这个形状'
+}
+
+/**
  * 从宿主实现（发布产物 `lib/client.js` 的文本）里抠出 `visiblePendingKind` 认的 kind。
  *
- * 抠不出来 = 上游改了实现形状 → 抛错，不静默放过：空集合会让"集合相等"变成永远成立。
+ * 三种"抠不出来"都必须**响**，而且要说清是哪一条模式破的 —— 默默返回空集合是最坏的结果：
+ * 空集合让"集合相等"要么永远成立（守卫假绿），要么退化成一条"我们多认了 kind"的误导性漂移。
+ * 所以三种情形分开处理，每种都把**具体模式**写进消息：
+ *
+ * 1. `VISIBLE_PENDING_KIND` 整个不匹配（函数没了、改了名，或改成三元/映射表 —— 产物被压成
+ *    单行时收尾的 `\n\s*}` 不再成立，也落在这一条）；
+ * 2. `switch` 匹配上了、函数体却没抠出来（只有正则被改坏才会发生，保留它也为类型收窄）；
+ * 3. 函数体里有 `case`，但没有一处是 `case "…":` 这种双引号字面量（改成单引号/常量引用）。
+ *
+ * 反过来，**一个 `case` 都没有**的 `switch`（只有 `default:`）是合法状态 —— 那是宿主真的
+ * 不认任何 kind，返回空集合，交给 `compareHostContract` 按"我们多认了"去报漂移。
+ *
+ * 这些错误只抛给 CI 面（`scripts/check-upstream.ts` 的 try/catch → 退出码 2，
+ * `tests/host-pending-kinds.node.test.mjs` → 用例失败）；`apply()` 的运行路径不碰这个模块。
  * @param source - 宿主 bundle 文本。
+ * @throws 解析不了时抛错，消息里点名破掉的模式与该怎么办。
  */
 export function parseHostPendingKinds(source: string): string[] {
   const found = VISIBLE_PENDING_KIND.exec(source)
   if (!found) {
-    throw new Error('宿主实现里找不到 `visiblePendingKind` —— 上游改了实现形状，守卫与本脚本都要跟着改')
+    throw new Error(
+      '宿主契约解析失败：VISIBLE_PENDING_KIND 不匹配 —— ' + visiblePendingKindHint(source) + '。\n'
+      + `  不匹配的正则：${VISIBLE_PENDING_KIND.source}\n`
+      + '  该做什么：按宿主的新形状改 src/host-contract.ts 的这个正则，并同步 src/client/tree.ts 那份 fork。',
+    )
   }
   const body = found[1]
   if (body === undefined) {
-    throw new Error('宿主实现里 `visiblePendingKind` 的函数体没抠出来 —— 上游改了实现形状，守卫与本脚本都要跟着改')
+    // `[\s\S]*?` 非贪婪且可空，正常情况下一定参与匹配；这个分支只为 noUncheckedIndexedAccess
+    // 收窄类型。真走到这里说明正则本身被改动过，照旧按解析失败处理。
+    throw new Error(
+      '宿主契约解析失败：`visiblePendingKind` 的 `switch` 匹配上了，函数体却没抠出来。\n'
+      + `  不匹配的正则：${VISIBLE_PENDING_KIND.source}\n`
+      + '  该做什么：改 src/host-contract.ts 的这个正则，并同步 src/client/tree.ts 那份 fork。',
+    )
   }
+  // 先把 `case` 的**出现次数**数出来：它是"解析坏了"与"宿主真的零 kind"的唯一区分依据。
+  const caseKeywords = body.match(/\bcase\b/g)?.length ?? 0
   const kinds: string[] = []
-  for (const match of body.matchAll(/case\s+"([^"]+)"/g)) {
+  for (const match of body.matchAll(PENDING_KIND_CASE)) {
     if (match[1] !== undefined) kinds.push(match[1])
+  }
+  if (kinds.length === 0 && caseKeywords > 0) {
+    throw new Error(
+      `宿主契约解析失败：\`visiblePendingKind\` 的 switch 里有 ${caseKeywords} 处 \`case\`，`
+      + '却没有一处是我们认的 `case "…":`（双引号字面量）写法 —— 上游改了 case 的写法'
+      + '（单引号、常量引用、映射表都算）。\n'
+      + `  不匹配的正则：${PENDING_KIND_CASE.source}\n`
+      + '  该做什么：改 src/host-contract.ts 里抠 kind 的那条正则，别把空集合当成"宿主零 kind"。',
+    )
   }
   return kinds
 }

@@ -179,6 +179,61 @@ test('登记表：store 迟到时 hook 先返回 undefined，登记后立即拿�
   store.dispose()
 })
 
+test('登记表：消费方先渲染、store 后到 —— 登记表与 store 两层订阅各触发一次重渲染（自愈的完整路径）', async () => {
+  // 比 `makeFakeReact` 更接近真实 React 的替身：`useSyncExternalStore` 在挂载/依赖变化时
+  // 订上，之后**只有**订阅者自己通知才会重渲染。hook 里两次 `useSyncExternalStore` 调用
+  // 各占一个槽位（槽 0 = 登记表，槽 1 = store），重"渲染"就是再调一次 hook。
+  // 没有这个替身，"自愈"就只能测成"再调一次 hook 就拿到新值"——那是恒真的，测不出
+  // 「少订阅了登记表，所以永远不会重渲染」这个真实故障。
+  const slots = []
+  const host = {
+    rerenders: 0,
+    renders: 0,
+    impl: (subscribe, getSnapshot) => {
+      const slot = host.renders % 2
+      host.renders += 1
+      const previous = slots[slot]
+      if (previous === undefined || previous.subscribe !== subscribe) {
+        previous?.unsubscribe()
+        slots[slot] = { subscribe, unsubscribe: subscribe(() => { host.rerenders += 1 }) }
+      }
+      return getSnapshot()
+    },
+  }
+  const registry = createSummaryRegistry({ useSyncExternalStoreImpl: host.impl })
+
+  // ① consumer 先渲染：provider 还没 apply。槽 0 必须订上登记表，槽 1 在 store 缺失时
+  // 只能是空订阅（`noopSubscribe`）。
+  assert.equal(registry.useSummary(), undefined)
+  assert.equal(slots[0]?.subscribe, registry.subscribe, '槽 0 必须是登记表订阅')
+  assert.equal(host.rerenders, 0)
+
+  // ② provider 的 store 到位，但首帧还没拉到数据。
+  const { timers } = makeTimers()
+  let resolveFetch
+  const pending = new Promise((resolve) => { resolveFetch = resolve })
+  const store = createSummaryStore({
+    fetch: () => pending,
+    equals: mapEquals(),
+    intervalMs: 0,
+    timers,
+  })
+  registry.setStore(store)
+  assert.equal(host.rerenders, 1, '登记表变化必须触发重渲染——这是自愈唯一的触发点')
+
+  // ③ 重渲染（登记表的监听器刚触发的那一次）：槽 1 此时改订 store 自己的快照。
+  assert.equal(registry.useSummary(), undefined, 'store 到位但还没拉到快照 → 仍是 undefined')
+  assert.equal(slots[1]?.subscribe, store.subscribe, '槽 1 必须改订 store 自身的订阅')
+
+  // ④ store 拉到数据：第二层订阅触发重渲染，hook 不需要调用方做任何事就恢复出快照。
+  resolveFetch(new Map([['session-a', entry(15, Number.MAX_SAFE_INTEGER)]]))
+  await flush()
+  assert.equal(host.rerenders, 2, 'store 快照变化必须触发重渲染')
+  assert.equal(registry.useSummary()?.get('session-a')?.prNumber, 15, '重渲染后必须读到数据')
+
+  store.dispose()
+})
+
 test('登记表：同一 store 重复登记不重复通知；撤销回到 undefined', () => {
   const { impl } = makeFakeReact()
   const registry = createSummaryRegistry({ useSyncExternalStoreImpl: impl })

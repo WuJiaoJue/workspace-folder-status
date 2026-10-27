@@ -107,7 +107,7 @@ export function BadgeSettingsCard({ scope, t }: BadgeSettingsCardProps): JSX.Ele
       </section>
       <section className={css.section} aria-labelledby={countSectionId}>
         <h3 className={css.heading} id={countSectionId}>{t('settings.count.section')}</h3>
-        <NumberRow field={BADGE_FIELDS.countThreshold} text={fieldText(BADGE_FIELDS.countThreshold)} label={t('settings.count.threshold')} hint={t('settings.count.thresholdHint')} state={state} actions={actions} />
+        <NumberRow field={BADGE_FIELDS.countThreshold} text={fieldText(BADGE_FIELDS.countThreshold)} label={t('settings.count.threshold')} hint={t('settings.count.thresholdHint')} decreaseLabel={t('settings.count.decrease')} increaseLabel={t('settings.count.increase')} state={state} actions={actions} />
       </section>
     </SettingsForm>
   )
@@ -143,11 +143,13 @@ function ToggleRow({ field, text, label, hint, state, actions, specimen }: {
 }
 
 /** 单行数字输入：label + 带加减按钮的数字输入 + hint。 */
-function NumberRow({ field, text, label, hint, state, actions }: {
+function NumberRow({ field, text, label, hint, decreaseLabel, increaseLabel, state, actions }: {
   field: string
   text: string
   label: string
   hint: string
+  decreaseLabel: string
+  increaseLabel: string
   state: { writable: boolean; saving: boolean }
   actions: { edit: (field: string, value: string) => void }
 }): JSX.Element {
@@ -165,7 +167,7 @@ function NumberRow({ field, text, label, hint, state, actions }: {
             className={css.badgeNumberButton}
             disabled={disabled || currentValue <= 0}
             onClick={decrement}
-            aria-label="减少"
+            aria-label={decreaseLabel}
           >
             −
           </button>
@@ -175,7 +177,7 @@ function NumberRow({ field, text, label, hint, state, actions }: {
             className={css.badgeNumberButton}
             disabled={disabled}
             onClick={increment}
-            aria-label="增加"
+            aria-label={increaseLabel}
           >
             +
           </button>

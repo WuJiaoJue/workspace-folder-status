@@ -4,7 +4,12 @@ export declare const SESSION_WATERMARK_BASE = 5;
 export declare const SESSION_WATERMARK_AUTO_MAX = 50;
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { SessionNode } from './tree.ts';
-/** The blank row plus the first `watermark` non-blank rows, in list order. */
+/**
+ * The blank row plus the first `watermark` non-blank rows, in list order.
+ * @param sessions - one group's rows, whose blank placeholder(s) lead the list
+ *   (`sectionMembers` puts every blank session ahead of the pinned/ordinary partitions).
+ * @param watermark - highest non-blank row index that stays visible; `0` keeps only blank rows.
+ */
 export declare function watermarkRows(sessions: readonly SessionNode[], watermark: number): {
     /** The rows this watermark makes visible. */
     rows: readonly SessionNode[];

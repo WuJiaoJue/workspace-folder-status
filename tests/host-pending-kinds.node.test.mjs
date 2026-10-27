@@ -69,6 +69,51 @@ test('我们从宿主读的那两个事实还在（改名会让 fork 静默失�
   }
 })
 
+test('解析不了必须**响**：与「宿主真的零 kind」不是一回事', () => {
+  // 为什么单列这一条：`parseHostPendingKinds` 一旦默默返回空集合，上面那条「集合必须相等」
+  // 的断言会退化成两种假象 —— 要么永远绿（空集也「相等」），要么报出一条「我们多认了 kind」
+  // 的误导性漂移。所以三种「抠不出来」各自抛错，且消息点名破掉的是哪条模式。
+  // 这几种错只落在 CI 面：`apply()` 的运行路径不 import 这个模块。
+
+  // 1) 函数名整个没了（上游改名或删掉）。
+  assert.throws(
+    () => readHostContract('export const unrelated = 1\n'),
+    /VISIBLE_PENDING_KIND/,
+    '宿主 bundle 里没有 visiblePendingKind 时必须抛错，不能返回空集合',
+  )
+
+  // 2) 名字还在，但不再是 `function … { switch (…) {` 的形状（改成三元或映射表）。
+  const reshaped = hostBundle.replace('function visiblePendingKind', 'function pickVisiblePendingKind')
+  assert.notEqual(reshaped, hostBundle, '这份反例没改成 —— 宿主的 bundle 形状变了，先改守卫')
+  assert.throws(
+    () => readHostContract(reshaped),
+    /名字还在/,
+    '形状变了也要抛错，并说清「名字还在、形状不对」——这才是读日志的人需要的那句话',
+  )
+
+  // 3) switch 还在，但 case 的写法变了（单引号），`case "…":` 一条都匹配不上。
+  //    这是最容易静默的一种：正则会「成功」返回空集合，和「宿主零 kind」长得一模一样。
+  const singleQuoted = hostBundle
+    .replace('case "approval":', "case 'approval':")
+    .replace('case "plan-review":', "case 'plan-review':")
+    .replace('case "question":', "case 'question':")
+  assert.notEqual(singleQuoted, hostBundle, '这份反例没改成 —— case 的写法变了，先改守卫')
+  assert.throws(
+    () => readHostContract(singleQuoted),
+    /3 处 `case`[\s\S]*双引号字面量/,
+    '有 case 却一条都认不出来时必须抛错，不能伪装成「宿主零 kind」',
+  )
+
+  // 4) 反面：switch 里一个 `case` 都没有（只有 default:）是**合法**状态 —— 宿主真的不认
+  //    任何 kind。这里必须不抛错、返回空集合，由 compareHostContract 按「我们多认了」报漂移。
+  const zeroKinds = 'function visiblePendingKind(kind) {\n\tswitch (kind) {\n\t\tdefault: return;\n\t}\n}\n'
+  assert.deepEqual(
+    readHostContract(zeroKinds).kinds,
+    [],
+    '零 case 的 switch 是合法的零 kind 宿主，不该被当成解析失败',
+  )
+})
+
 test('守卫不是摆设：宿主多一种 kind 时，这个比较必须失配', () => {
   // 拿真实 bundle 的一份"改造过的副本"当反例：宿主若真的加了 kind，比较必须红。
   // 没有这一条，上面那条断言可能因为解析写错而**永远绿**（空集合也会"相等"的假象）。

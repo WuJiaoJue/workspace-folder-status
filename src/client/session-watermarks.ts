@@ -6,7 +6,12 @@ export const SESSION_WATERMARK_AUTO_MAX = 50
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionNode } from './tree.ts'
 
-/** The blank row plus the first `watermark` non-blank rows, in list order. */
+/**
+ * The blank row plus the first `watermark` non-blank rows, in list order.
+ * @param sessions - one group's rows, whose blank placeholder(s) lead the list
+ *   (`sectionMembers` puts every blank session ahead of the pinned/ordinary partitions).
+ * @param watermark - highest non-blank row index that stays visible; `0` keeps only blank rows.
+ */
 export function watermarkRows(
   sessions: readonly SessionNode[],
   watermark: number,
@@ -16,12 +21,20 @@ export function watermarkRows(
   /** Non-blank rows beyond the watermark, capped by the row list's own hidden accounting. */
   hiddenCount: number
 } {
+  const rows: SessionNode[] = []
   let count = 0
-  const rows = sessions.filter((session) => {
-    if (session.blank) return true
+  for (const session of sessions) {
+    if (session.blank) {
+      rows.push(session)
+      continue
+    }
+    // Early exit on the first kept-out row: blanks always lead the list, so nothing after the
+    // cut can be visible and the tail no longer has to be walked (this replaced a full filter
+    // over every session row — the watermark is usually far smaller than the list).
+    if (count >= watermark) break
     count += 1
-    return count <= watermark
-  })
+    rows.push(session)
+  }
   return { rows, hiddenCount: sessions.length - rows.length }
 }
 
@@ -61,11 +74,17 @@ export function raiseWatermarks(
   marks: Readonly<Record<string, number>>,
   required: Iterable<readonly [string, number]>,
 ): Readonly<Record<string, number>> {
-  let raised = marks
+  let raised: Record<string, number> | undefined
   for (const [key, watermark] of required) {
-    if (watermark > (raised[key] ?? SESSION_WATERMARK_BASE)) {
-      raised = { ...raised, [key]: watermark }
-    }
+    // Compare against the copy once it exists, so a repeated key sees the value raised earlier
+    // in this same pass (`marks` itself is never written).
+    const current = raised ?? marks
+    if (watermark <= (current[key] ?? SESSION_WATERMARK_BASE)) continue
+    // One spread for the whole pass, not one per raised group: the shape of the result is
+    // "input plus whichever groups rose", so the object is copied on the first raise and then
+    // built up in place.
+    raised ??= { ...marks }
+    raised[key] = watermark
   }
-  return raised
+  return raised ?? marks
 }

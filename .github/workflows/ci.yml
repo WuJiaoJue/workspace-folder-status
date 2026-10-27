@@ -162,6 +162,33 @@ jobs:
             }
           "
 
+      - name: client.js 的 gzip 体积预算
+        # 为什么要有这条：`lib/client.js` 随源码提交，安装方直接吃它；多一行 import 就可能让
+        # 体积翻倍，而现有测试没有任何一条会因此变红。这里只量**已提交的产物**，不装依赖、
+        # 不构建 —— 与本 job「只读，永不改写工作区」的约定一致。
+        #
+        # 上限怎么定：2026-10-27 在干净 worktree 上实测 gzip 77,312 字节 / 原始 299,199 字节
+        # （行面拆分重构之后的值；重构前是 75,579 / 296,579），按 ~8.6% 余量保留 84,000。
+        # 留余量是因为 gzip 的压缩率随实现与级别浮动（本地 gzip 与 runner 上的未必逐字节一致），
+        # **不是**给「顺手再加点功能」留的额度：真需要变大，就在这里把 ceiling 调高，并在 PR 里
+        # 说明为什么值这个体积。余量已不足一成 —— 下一次真正需要长体积的改动，请先复查预算。
+        run: |
+          set -eu
+          if [ ! -f lib/client.js ]; then
+            echo "::error title=缺 lib/client.js::体积预算量的是提交进仓库的产物，文件不在说明检出或产物约定坏了。"
+            exit 1
+          fi
+          # 唯一要改的常量（别在别处写第二份）。
+          ceiling=84000
+          raw=$(wc -c < lib/client.js | tr -d '[:space:]')
+          gz=$(gzip -c lib/client.js | wc -c | tr -d '[:space:]')
+          pct=$(( gz * 100 / ceiling ))
+          if [ "$gz" -gt "$ceiling" ]; then
+            echo "::error title=client.js 超出体积预算::${gz} bytes / ceiling ${ceiling} bytes (${pct}% of budget)，原始 ${raw} bytes。要么瘦身，要么把 .github/workflows/ci.yml 里的 ceiling 调高并说明理由。"
+            exit 1
+          fi
+          echo "✔ client.js ${gz} bytes / ceiling ${ceiling} bytes (${pct}% of budget)，原始 ${raw} bytes"
+
       - name: CHANGELOG 有「未发布」节可写
         # 发版时要把它改名成版本节，否则 release notes 无源
         run: |
@@ -253,10 +280,14 @@ jobs:
           mkdir -p "$(dirname "$copy")"
           cp -a "$PWD/." "$copy"
           ( cd "$copy" && npm run build >/dev/null )
-          if diff -rq "$PWD/lib" "$copy/lib" >/dev/null; then
+          # 排除 tsconfig.tsbuildinfo：它是被 .gitignore 掉的**增量缓存**，不是产物。里面的
+          # `latestChangedDtsFile` 之类的字段取决于上一次构建动过哪些文件，同一份源码在"刚 clone
+          # 完"和"本地反复构建过"两种状态下会给出不同值 —— 那是缓存状态差异，与产物可复现性无关，
+          # 拿它判红只会让人去查一个不存在的绝对路径问题。真正要比的是编译输出。
+          if diff -rq --exclude='*.tsbuildinfo' "$PWD/lib" "$copy/lib" >/dev/null; then
             echo "✔ 同一 commit 在两个不同目录构建，lib/ 逐字节一致"
           else
             echo "::error title=产物不可复现::换个目录构建就得到不同的 lib/ —— CSS 前缀大概又用上了绝对路径。"
-            diff -rq "$PWD/lib" "$copy/lib" | head -5
+            diff -rq --exclude='*.tsbuildinfo' "$PWD/lib" "$copy/lib" | head -5
             exit 1
           fi

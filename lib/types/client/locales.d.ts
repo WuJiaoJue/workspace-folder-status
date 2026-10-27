@@ -138,6 +138,8 @@ export declare const zh: {
     'settings.count.section': string;
     'settings.count.threshold': string;
     'settings.count.thresholdHint': string;
+    'settings.count.decrease': string;
+    'settings.count.increase': string;
     'settings.save': string;
     'settings.saving': string;
     'settings.saveFailed': string;
@@ -281,6 +283,8 @@ export declare const en: {
     'settings.count.section': string;
     'settings.count.threshold': string;
     'settings.count.thresholdHint': string;
+    'settings.count.decrease': string;
+    'settings.count.increase': string;
     'settings.save': string;
     'settings.saving': string;
     'settings.saveFailed': string;

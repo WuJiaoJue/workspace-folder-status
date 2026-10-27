@@ -6,6 +6,49 @@
 
 ## 未发布
 
+- **refactor** 会话列表面板拆成四个组件文件：`rows/WorkspaceBrowser.tsx` 从 1562 行降到 685 行，
+  树体、扁平列表、搜索结果、视图选项菜单、空态占位各自独立（`SessionTree.tsx` / `ListView.tsx` /
+  `ViewOptionsMenu.tsx` / `EmptySessions.tsx`），三类共享件（搜索 wire 常量、拖拽状态机、树体的 prop
+  契约）收进 `browser-shared.ts`。三个列表体本来就是**互斥渲染**的分支，拆开后仍互不 import；成环由
+  `browser-shared.ts` 单向下指挡掉。行为不变：切分是逐段搬移，没有改写判定、排序或动画时序。
+
+- **perf** 空闲分组不再产生新的状态对象：`summarizeGroupStatus` 对「六项全零且没有来源贡献」的组
+  交回冻结的 `EMPTY_LIVE_STATUS`，`mergeLiveStatus` 把「加一份零」实现为**原样返回入参**。多层折叠
+  里每层都会把子树重滚一遍，此前每滚一次都为每个空闲组造一份等值新对象；下游按引用判等的选择器于是
+  每轮重渲染，而它读到的数字一个没变。合并仍不修改任何入参。
+
+- **perf** `watermarkRows` 在第一个被截断的行处提前退出（空行必然排在组首，由 `tree.ts` 的
+  `sectionMembers` 保证，这条例外前提写进了它的 JSDoc）；`raiseWatermarks` 整趟只拷贝一次对象，
+  不再为每个抬升的分组各展开一次；`WorkspaceBrowser` 与三个列表体共用的「主视图保留了哪个会话」
+  扫描改为按 list 身份记忆，不再每轮渲染各 `Object.values()` 一次（`browser-shared.ts` 的
+  `mainViewSessionId`）。
+
+- **fix** `derive()` 用模块私有 Symbol 代替 `undefined` 表示「尚未投影」：投影**合法地**可能返回
+  `undefined`（"此刻没有待处理请求"就是一次正常的空结果），旧写法让每次 `getSnapshot()` 都重跑投影；
+  投影若新建 `Set`/数组，消费者每次读都拿到新引用，选择器永不收敛 —— 正是这个投影器要避免的事。
+
+- **a11y** 徽标设置卡片的数字增减按钮不再硬编码中文 `aria-label`（`settings.count.decrease` /
+  `settings.count.increase` 进 zh/en 两份字典）；搜索结果区补 `aria-busy`，并给「无匹配」与
+  「仅显示前 N 条」加上 `role="status"`，屏幕阅读器能从"正在搜索"读到终止结果。徽标自身的
+  `aria-label` 与 `title` 经复核同源、且逐项覆盖可见状态点与数字，无需改动。
+
+- **test** 补上此前**从未在本仓库跑过**的契约：`tests/apply-smoke.client.spec.ts`（宿主半边
+  `apply()` 不读 `ctx`、banner 仍报得出产物与进程）、`tests/facet-lifecycle.client.spec.tsx`
+  （登记面 → 消费存储 → React 的迟到登记 / 快照推送 / 同 id 热替换 / 注销 / dispose）、
+  `tests/derive.client.spec.ts`（投影身份稳定，含"返回 `undefined` 也只算一次"）与
+  `tests/locale-keys.client.spec.ts`（中英字典键必须同集合）。`group-status` 那条「空闲组是全零」
+  改为同时断言**引用**就是哨兵；`cross-plugin-summary` 补了「store 迟到注册后 hook 自愈」。
+  每条新用例都做过反向验证：改坏被保护的行为即失败，改回即通过。
+
+- **chore** 构建与守卫：CI 新增 `lib/client.js` 的 gzip 体积预算（当前 77,312 字节 / 上限 84,000，
+  `release-invariants` job，纯 shell）；`parseHostPendingKinds` 解析不到时改为抛出**点名是哪一条正则
+  破了**的错误，不再静默返回空集合 —— 空集合会让"集合相等"永远成立，或退化成一条误导性的
+  "我们多认了 kind"漂移；`build/tools/experimental-package-policy.ts` 删掉本仓库结构上不可能走到的
+  分支（没有 `packages/experimental/` 树，十个保留名在 264 个已装包里一个都不出现）；产物可复现性
+  检查排除被 `.gitignore` 的增量缓存 `tsconfig.tsbuildinfo`（它记的是上次构建动过哪些文件，与被比较的
+  编译输出无关）。
+
+
 ## 0.5.0 — 2026-10-22
 
 - **fix** 宿主契约漂移**从此有人看着了**：`pendingInteraction.kind` 是开放集合

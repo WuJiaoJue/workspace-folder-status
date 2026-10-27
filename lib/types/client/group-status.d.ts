@@ -67,6 +67,11 @@ export declare const EMPTY_LIVE_STATUS: GroupLiveStatus;
  *
  * 用于多层聚合：折叠的父文件夹要覆盖整棵子树，而子树里每一层都已各自折过一遍。
  * `FacetFold.data` 怎么合归该 facet 自己决定，本模块从不解释。
+ *
+ * 加法单位元走**引用原样返回**：值不变时换一个新对象，会让"同一棵空闲子树"在两轮
+ * 计算之间有不同的身份。`EMPTY_LIVE_STATUS` 留在这个模块里的理由就是身份稳定（见其
+ * 注释），合并这一层不该每加一次零就把那个理由作废。返回的是入参本身（不改写、不
+ * 拷贝），因此与逐字段相加的结果等值。
  */
 export declare function mergeLiveStatus(a: GroupLiveStatus, b: GroupLiveStatus): GroupLiveStatus;
 /**

@@ -251,6 +251,9 @@ describe('folded group live status', () => {
 
   it('reports an idle group as all-zero', () => {
     const state = list([summary('a', 30), summary('b', 20)])
+    // 值相等还不够：#6 要的是**引用**就是那个冻结哨兵，否则每次重算都为每个空闲组
+    // 造一份零值对象，哨兵的身份稳定性等于白留，下游按 Object.is 判等的选择器照样重渲染。
+    expect(groupOf(state, new Map()).liveStatus).toBe(EMPTY_LIVE_STATUS)
     expect(groupOf(state, new Map()).liveStatus).toEqual(EMPTY)
   })
 })
@@ -464,6 +467,30 @@ describe('mergeLiveStatus', () => {
   it('一侧没有某来源时原样带过（不编造合并）', () => {
     expect(mergeLiveStatus(at('x.a'), EMPTY).facets.get('x.a')?.fold).toEqual({ count: 1, tone: 'warn', pulse: false })
     expect(mergeLiveStatus(EMPTY, at('x.a')).facets.get('x.a')?.fold).toEqual({ count: 1, tone: 'warn', pulse: false })
+  })
+
+  it('空闲折果是加法单位元：合并交回另一侧的同一引用（#6）', () => {
+    const busy: GroupLiveStatus = { ...EMPTY, running: 2, approval: 1 }
+    // 多层聚合时每层都会把子树滚一遍；"加一份零"若新建对象，空闲子树每轮换身份。
+    expect(mergeLiveStatus(EMPTY, busy)).toBe(busy)
+    expect(mergeLiveStatus(busy, EMPTY)).toBe(busy)
+    expect(mergeLiveStatus(EMPTY_LIVE_STATUS, EMPTY_LIVE_STATUS)).toBe(EMPTY_LIVE_STATUS)
+    // 两侧都有内容时照常产出新对象（引用相等只用于单位元，不是一层缓存）。
+    expect(mergeLiveStatus(busy, busy)).not.toBe(busy)
+  })
+
+  it('空闲父组沿用唯一贡献子组的状态引用（#6）', () => {
+    const direct = new Map<string, GroupLiveStatus>([
+      ['parent', EMPTY_LIVE_STATUS],
+      ['child', { ...EMPTY, running: 1 }],
+    ])
+    const children = new Map<string | undefined, readonly GroupNode[]>([
+      [undefined, [{ key: 'parent' } as GroupNode]],
+      ['parent', [{ key: 'child' } as GroupNode]],
+    ])
+    const aggregated = aggregateGroupStatuses(direct, children)
+    // 折叠父级只是"把子树的贡献搬上来"，自己没贡献时不该产生第二份等值对象。
+    expect(aggregated.get('parent')).toBe(aggregated.get('child'))
   })
 })
 
