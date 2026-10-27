@@ -35,7 +35,7 @@ import { execFileSync } from 'node:child_process';
 const FEATURE_HEADINGS = ['## 功能', '## 特性一览', '## Features'];
 /** 分组顺序照 later：feat / fix 在前，表外的类型排最后并按名字排序。 */
 // breaking 放最前：它是用户最需要先看到的；其余照 later 的习惯 feat/fix 在前。
-const TYPE_ORDER = ['breaking', 'feat', 'fix', 'perf', 'refactor', 'a11y', 'docs', 'test', 'chore', 'build', 'ci', 'style', 'i18n'];
+const TYPE_ORDER = ['breaking', 'feat', 'fix', 'refactor', 'perf', 'a11y', 'docs', 'test', 'chore', 'build', 'ci', 'style', 'i18n'];
 
 const [rawVer, ...flags] = process.argv.slice(2);
 const ver = String(rawVer || '').replace(/^v/, '');
@@ -155,6 +155,12 @@ function releaseLine(item) {
   if (rest.trim()) {
     const k = rest.indexOf('。');
     expl = (k >= 0 ? rest.slice(0, k + 1) : rest).trim();
+    // 解释句太长时优先在第一处分句处收住：group-status 自己的 Release 平均条目 95 字，
+    // 我们照搬 CHANGELOG 会把平均拉到 130+ 且更多条目撞上 240 字截断。
+    if (expl.length > 120) {
+      const m2 = expl.search(/[，；]/);
+      if (m2 > 40) expl = expl.slice(0, m2 + 1);
+    }
   }
   // 标题里若已有 `**`（如 `跨插件状态改为**协议**：…`），整段再加粗会产出
   // `**…****…**` 这种断掉的加粗。剥掉标题内部的重音符后再整体加粗——词一字不改。
