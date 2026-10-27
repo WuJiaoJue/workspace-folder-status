@@ -180,11 +180,13 @@ dsh plugin --profile web remove dsh-group-status
 
 | Item | Value |
 |---|---|
-| DSH core | `0.2.1-rc.2` |
-| peer dependency | `@deepseek-ai/cordis ~4.0.5` |
+| DSH core | declares `>=0.2.1-rc.2 <0.3.0-0`; verified on `0.2.1-rc.2` / `rc.3` / `rc.4` |
+| peer dependencies | `@deepseek-ai/cordis ~4.0.5` plus 12 `@deepseek-ai/dsh-*` at `^0.2.1-rc.2` |
 | Upstream base | `@deepseek-ai/dsh-client-ui-workspace 0.2.1-rc.2` (source vendored into `src/`) |
 | Install shape | fork override: same slots registered, stock row disabled via `cordis.patch.yml` |
 | Optional partners | dsh-later (schedule summary), dsh-gitea-dispatch (waiting-review summary) |
+
+Those 12 peers are not metadata. Cores at or below 0.2.0 **do not read `engines.dsh`** — they judge compatibility purely from `@deepseek-ai/dsh*` peer ranges. Without the enumeration, 0.2.0 considers this package compatible and installs it; that generation never published `@deepseek-ai/dsh-api-remote-access`, so the client `inject` for `remoteAccess` never resolves, the fiber stays pending, `uiWorkspace` is never provided, and `ui-sidebar` / `ui-conversation` / `ui-chat` — 12 entries in all — fail to activate. The page becomes "Failed to load plugins" and the user loses the entire sidebar. With the peers declared, 0.2.0-rc.2 measured as `skipping profile bundle`, and the host is unharmed; from 0.2.1 on, `engines.dsh` decides alone and peers are ignored, so in-window generations are unaffected.
 
 Every upstream generation requires a manual rebase — see the [upgrade runbook](./docs/upgrading.md). If upstream renames a slot, changes a component signature or the context contract, this package will not follow on its own.
 

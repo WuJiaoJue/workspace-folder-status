@@ -136,6 +136,57 @@
 - 聚合与渲染**按协议工作，不按来源分支**：新状态源接入不应改动 `group-status.ts` / `badge-labels.ts` / `rows/GroupBadge.tsx`。上游换代若要求这三处重新施加，检查点是没有把来源名写回去。
 - 本插件**不代管任何来源**：不要为了「方便」重新引入 `legacy/` 式适配器，两家现有接入方各自注册（见 [`facet-protocol.md`](facet-protocol.md) 的迁移史一节)。
 - provider 侧模板的导出面（`createSummaryStore` / `createSummaryRegistry` / `summarizeGroup` / `mapEquals` / `entryFor` / `normalizeSessionId` / `defaultCanPoll`）——它被别的插件**复制**走，改名会静默影响它们的调用点；设计说明与「复制、不要 import」的实测依据写在 [`src/client/cross-plugin-summary.ts`](../src/client/cross-plugin-summary.ts) 文件头
+
+## 上游代次跟踪（2026-10-27 实测）
+
+本包声明 `engines.dsh: >=0.2.1-rc.2 <0.3.0-0`，peer 侧另有 12 条 `@deepseek-ai/dsh-*`（`^0.2.1-rc.2`，
+用于让不读 `engines.dsh` 的旧内核拒绝装载）。
+
+**已验代次**：`0.2.1-rc.2`（= 当时 npm `latest`，也是本包声明的下界）、`0.2.1-rc.3`、`0.2.1-rc.4`。
+三代的门禁（本运行时 + 0.2.1+ 语义双判）、冷启动装配、`dsh.client.inject` 12 个包可解析、
+`tsc`（**对着该代次真实的 `.d.ts`**，不是对着基线猜）、`vitest 183` + `node 41` 全部通过。
+rc.2 上另做了真 GUI 功能验收：分组行 / 会话行 / 视图菜单 / 扁平列表 / 搜索命中与无匹配 /
+折叠徽标（「1 进行中 · 1 已完成」两枚点并存）/ 悬停明细两行。证据（JSON 明细 + real-gui 截图）
+在 workspace 的 `devkit/results/dsh-group-status-cross-kernel-2026-10-27.json` 与
+`devkit/results/screens/`，不在本仓库内。
+
+**契约面没变**：rc.4 的 `dsh-client-ui-workspace/lib/client.js` 相比 rc.2 有 15 行差异
+（231 078 → 231 234 字节），但 `visiblePendingKind` 认的 kind 仍是 `approval` / `plan-review` /
+`question`，`completionUnread` 与 `pendingInteraction` 两个事实也都还在 ——
+所以 `src/host-contract.ts` 那道守卫在 rc.4 上是绿的，**不需要跟着改**。
+
+**但行为面漂了，漂的正是本仓库 fork 的那块**。rc.4 在 `UiWorkspaceService` 上改了三处，
+`src/client/navigation.ts` 是它的 fork，目前仍是 rc.2 写法：
+
+| rc.4 的改动 | `navigation.ts` 现状 |
+|---|---|
+| 删掉 `connectBlank` 里的 `if (reuse === undefined) return this.sessions.create({ workspaceId })` 早退 | 第 208 行仍是旧写法 |
+| 空白会话复用改为 **preset 感知**（比较 `summary.projectionValues?.agentPreset`） | 只在 inflight 里比 preset，复用候选未比对 |
+| 草稿初始化 `clearPreviousDraft: boolean` → `whenDraftExists: 'replace' \| 'keep'`（旧字段降级为别名） | 第 327 行仍是旧语义 |
+
+这件事**不会**自动修好：`cordis.patch.yml` 把官方 `ui-workspace` 行 `disabled: true`，`uiWorkspace`
+由本插件自己提供 —— 所以在 rc.4 上跑的时候，**rc.4 的这三处改进根本到不了用户**，用户拿到的是 fork 里
+那份 rc.2 行为。**能跑 ≠ 行为一致**，这是"全绿"之外必须单独记一笔的差别。
+
+**本仓库的约定**：容器服务（`navigation.ts`）以**基线代次**为准，不逐 rc 跟。理由：这块没有任何本地
+用例覆盖（`tests/workspaces-service.client.spec.ts` 在 `MONOREPO_ONLY_SPECS` 里，从未在 CI 跑过），
+改 inflight 复用与草稿保留语义无法证明没坏，而收益只是三处细节 UX。
+
+**什么时候必须动**（任一触发即升基线，别拖）：
+
+1. npm 的 `latest` 移到基线之后的代次 —— 用户会自动装上，漂移立刻变成用户可见行为；
+2. `devkit/matrix.mjs` 的 `gate` 或 `boot` 在某个代次变红；
+3. `tests/host-pending-kinds.node.test.mjs` 变红（kind 集合或两个事实名漂移）；
+4. `tsc` 对着新代次的 `.d.ts` 变红。
+
+**升基线的清单**（漏一项 CI 就红，2026-10-27 实测踩过）：
+
+- 26 个 `@deepseek-ai/dsh-*` devDependencies 一起改（`tests/artifacts.node.test.mjs` 逐个断言）；
+- `peerDependencies` 里那 12 条的范围必须等于新的 `engines.dsh` 下界（同文件另一条用例锁住）；
+- `tests/artifacts.node.test.mjs` 里那条**硬编码**的 `'0.2.1-rc.2'`；
+- 本文件「基线从哪来」「本地改动清单」两节里的版本号；
+- 重新 `pnpm install` 并重建 `lib/`（产物随源码提交）。
+
 ## 验证
 
 1. 找一个有进行中 / 待审批会话的分组 → 收起 → 文件夹名后出现徽标；

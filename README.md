@@ -182,11 +182,13 @@ dsh plugin --profile web remove dsh-group-status
 
 | 项 | 值 |
 |---|---|
-| DSH 内核 | `0.2.1-rc.2` |
-| peer 依赖 | `@deepseek-ai/cordis ~4.0.5` |
+| DSH 内核 | 声明 `>=0.2.1-rc.2 <0.3.0-0`；实测 `0.2.1-rc.2` / `rc.3` / `rc.4` 全绿 |
+| peer 依赖 | `@deepseek-ai/cordis ~4.0.5` + 12 个 `@deepseek-ai/dsh-*`，范围 `^0.2.1-rc.2` |
 | 上游基线 | `@deepseek-ai/dsh-client-ui-workspace 0.2.1-rc.2`（源码已 vendored 进本仓库 `src/`）|
 | 安装形态 | fork 覆盖包：同槽位注册 + `cordis.patch.yml` 禁用官方行 |
 | 可选搭档 | dsh-later（定时任务摘要）、dsh-gitea-dispatch（等待评审摘要）|
+
+peer 里那 12 条**不是元数据**：≤0.2.0 的内核不读 `engines.dsh`，只按 `@deepseek-ai/dsh*` peer 的范围判兼容。不逐条声明时，0.2.0 会把本包判成「兼容」并装进去 —— 而那一代没有 `@deepseek-ai/dsh-api-remote-access`，客户端 `inject` 的 `remoteAccess` 永远拿不到，fiber 永久 pending，`uiWorkspace` 不再被提供，`ui-sidebar` / `ui-conversation` / `ui-chat` 等 12 条一起不激活，**整页 "Failed to load plugins"，用户失去整个侧栏**。声明之后，0.2.0-rc.2 实测是内核直接 `skipping profile bundle`，宿主不受损；而 0.2.1 起 `engines.dsh` 命中即返回、peer 不参与判定，窗口内代次不受影响。
 
 上游一换代就得按[升级手册](./docs/upgrading.md) rebase 一次；上游改槽位名、组件签名或上下文契约时，本包不会自动跟上。
 
