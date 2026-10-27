@@ -40,6 +40,18 @@
   改为同时断言**引用**就是哨兵；`cross-plugin-summary` 补了「store 迟到注册后 hook 自愈」。
   每条新用例都做过反向验证：改坏被保护的行为即失败，改回即通过。
 
+- **docs** 跨代次验证记录（2026-10-27，`devkit/results/dsh-group-status-cross-kernel-2026-10-27.json`
+  与 `devkit/results/screens/`）：0.2.1-rc.2 上 gate / peer / tsc / test / 冷启动装配全绿，
+  真 GUI 里分组行、会话行、View options 菜单、扁平列表、搜索命中与无匹配态均正常，
+  搜索区的 `aria-busy` 与 `role="status"` 在真机可见。**0.2.0-rc.2 实测会把整个侧栏拖下去**：
+  该代次没发布 `@deepseek-ai/dsh-api-remote-access`，客户端 `inject` 的 `remoteAccess` 拿不到
+  → fiber 永久 pending → `uiWorkspace` 不再被提供 → 侧栏 / 对话 / chat 共 12 条一起不激活，
+  页面直接 "Failed to load plugins"。所以 `engines.dsh >=0.2.1-rc.2` 是**硬下界**，不是保守估计；
+  0.1.7/0.2.0 的内核也不读 `engines.dsh`（只卡 `dsh-*` peer，而本包的 `dsh-*` peer 只有
+  `@deepseek-ai/cordis`），因此这两代上它**能被装进去**——装进去就会坏，别手工降级。
+  折叠分组的活状态徽标这一轮**未判定**：隔离实例里宿主没有上报会话活状态，新/旧构建 A/B 均为空，
+  故不能算通过（对照记录见 `devkit/results/screens/README.md`）。
+
 - **chore** 构建与守卫：CI 新增 `lib/client.js` 的 gzip 体积预算（当前 77,312 字节 / 上限 84,000，
   `release-invariants` job，纯 shell）；`parseHostPendingKinds` 解析不到时改为抛出**点名是哪一条正则
   破了**的错误，不再静默返回空集合 —— 空集合会让"集合相等"永远成立，或退化成一条误导性的
