@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.5.1 — 2026-10-27
+
 - **refactor** 会话列表面板拆成四个组件文件：`rows/WorkspaceBrowser.tsx` 从 1562 行降到 685 行，
   树体、扁平列表、搜索结果、视图选项菜单、空态占位各自独立（`SessionTree.tsx` / `ListView.tsx` /
   `ViewOptionsMenu.tsx` / `EmptySessions.tsx`），三类共享件（搜索 wire 常量、拖拽状态机、树体的 prop
