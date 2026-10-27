@@ -35,7 +35,7 @@ import { execFileSync } from 'node:child_process';
 const FEATURE_HEADINGS = ['## 功能', '## 特性一览', '## Features'];
 /** 分组顺序照 later：feat / fix 在前，表外的类型排最后并按名字排序。 */
 // breaking 放最前：它是用户最需要先看到的；其余照 later 的习惯 feat/fix 在前。
-const TYPE_ORDER = ['breaking', 'feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'chore', 'build', 'ci', 'style'];
+const TYPE_ORDER = ['breaking', 'feat', 'fix', 'perf', 'refactor', 'a11y', 'docs', 'test', 'chore', 'build', 'ci', 'style', 'i18n'];
 
 const [rawVer, ...flags] = process.argv.slice(2);
 const ver = String(rawVer || '').replace(/^v/, '');
@@ -90,12 +90,13 @@ function items(lines) {
 }
 
 const typeOf = (item) => {
-  const m = /^-\s+\*\*([a-zA-Z]+)\*\*/.exec(item);
+  // 类型名允许数字：`a11y` / `i18n` 这类会被纯字母正则漏成 other（0.5.1 就发生过）
+  const m = /^-\s+\*\*([a-zA-Z0-9]+)\*\*/.exec(item);
   return m ? m[1].toLowerCase() : 'other';
 };
 
 /** 只去掉 `- **feat** ` 这个类型前缀，其余文字一字不改。 */
-const stripType = (item) => item.replace(/^-\s+\*\*[a-zA-Z]+\*\*\s*/, '- ');
+const stripType = (item) => item.replace(/^-\s+\*\*[a-zA-Z0-9]+\*\*\s*/, '- ');
 
 /**
  * 把一条 CHANGELOG 条目收成 Release 里的一行：**取条目自带结构里的 `标题：首句`，
@@ -132,7 +133,7 @@ function releaseLine(item) {
     return acc + (CJK.test(a) && CJK.test(b) ? '' : ' ') + cur;
   }, '');
   const line = para
-    .replace(/^-\s+(?:\*\*[a-zA-Z]+\*\*\s*)?/, '')
+    .replace(/^-\s+(?:\*\*[a-zA-Z0-9]+\*\*\s*)?/, '')
     .replace(/\s+/g, ' ')
     .trim();
   const inCode = (t, i) => ((t.slice(0, i).match(/`/g) ?? []).length) % 2 === 1;
@@ -159,10 +160,16 @@ function releaseLine(item) {
   // `**…****…**` 这种断掉的加粗。剥掉标题内部的重音符后再整体加粗——词一字不改。
   const headPlain = head.replaceAll('*'.repeat(2), '').trim();
   let out = head ? `**${headPlain}**${expl ? `：${expl}` : ''}` : `- ${line}`;
-  if (out.length > 200) {
-    const t = out.slice(0, 200);
-    const at = Math.max(t.lastIndexOf('、'), t.lastIndexOf('）'));
-    out = (at > 90 ? t.slice(0, at + 1) : t.trimEnd()) + '…';
+  if (out.length > 240) {
+    let t = out.slice(0, 240);
+    // 括号感知：截断点若落在没闭合的「（」里，回溯到那个括号之前再收尾 ——
+    // 否则会产出「（搜索 wire 常量、拖拽状态机、…」这种半截括号。
+    const open = t.lastIndexOf('（');
+    if (open > 60 && (t.slice(open).match(/（/g) ?? []).length > (t.slice(open).match(/）/g) ?? []).length) {
+      t = t.slice(0, open);
+    }
+    const at = Math.max(t.lastIndexOf('、'), t.lastIndexOf('，'), t.lastIndexOf('）'));
+    out = (at > 90 ? t.slice(0, at + 1) : t).replace(/[、，]$/, '') + '…';
   }
   return '- ' + out;
 }
