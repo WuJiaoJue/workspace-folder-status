@@ -10,9 +10,10 @@
  * preferences, so the plugin never reads it here. DSH ≥0.2.0 builds that page
  * straight off `entry.fiber.runtime.Config` (ns = this entry's Loader id,
  * `dsh-group-status`), which is why a client-only plugin needs a Config export
- * and an otherwise-empty apply.
+ * and an apply of its own (it carries no behavior — only the build banner).
  */
 import Schema from '@deepseek-ai/schemastery'
+import { applyBanner } from './build-stamp.js'
 
 /** Loader entry id — also the settings namespace the Host projects onto. */
 export const name = 'dsh-group-status'
@@ -62,9 +63,14 @@ export interface Config {
 
 /**
  * Host plugin body. Cordis passes `(ctx, config)`; only the Config matters here
- * and even that is read by the browser half, not here — the body stays empty so
- * this plugin keeps its "pure UI plugin" shape.
+ * and even that is read by the browser half, not here — the body holds nothing but
+ * the build self-report banner, so this plugin keeps its "pure UI plugin" shape.
+ * The banner answers "which artifact is this process running" (mtime) and "did the
+ * last HMR swap actually land", which is the only host-side signal a UI-only
+ * plugin can produce; see `src/build-stamp.ts`.
  * @param _ctx - host context (unused: no host-side behavior).
  * @param _config - resolved {@link Config} (unused: the browser half reads it).
  */
-export function apply(_ctx: unknown, _config: Config): void {}
+export function apply(_ctx: unknown, _config: Config): void {
+  console.log(applyBanner('dsh-group-status', import.meta.url))
+}
