@@ -197,7 +197,15 @@ if (sectionLines === null) {
 /** 上一条 Release 的「## 功能」小节（排除本次自己，避免自我吞并）。 */
 function previousReleaseFeatures(currentVersion) {
   const gh = (args) =>
-    execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 });
+    // 必须带超时：把取历史 tag 改成 gh api 之后，遇到不可达/虚构的 github remote
+    // 会无限等网络（测试里就挂死过整轮）。8s 足够正常情况，且失败会被上层 catch。
+    execFileSync('gh', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 1 << 24,
+      timeout: 8000,
+      env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
+    });
   try {
     // 取历史 tag 用 API 而不是 `gh release list --json`：本机这版 gh 的 release list
     // 不支持 --json，会抛错 → 被 catch 吞掉 → 静默退化到 README 的特性小节（少继承几条）。
